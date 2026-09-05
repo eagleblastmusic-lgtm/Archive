@@ -2413,9 +2413,10 @@ async function openVideoModal(video) {
   }
 
   let modalLoaderDismissed = false;
-  const hideLoadingPoster = () => {
+  const hideLoadingPoster = (reason = 'unknown') => {
     if (modalLoaderDismissed) return;
     modalLoaderDismissed = true;
+    modalPerfTracker?.markLoaderHidden(reason);
     if (dom.videoLoader) {
       dom.videoLoader.style.opacity = '0';
       setTimeout(() => {
@@ -2436,10 +2437,12 @@ async function openVideoModal(video) {
 
   // Precyzyjne wykrywanie pierwszej wyrenderowanej klatki
   if (modalPerfTracker) {
-    modalPerfTracker.attachToPlayer(dom.modalVideo, hideLoadingPoster);
+    modalPerfTracker.attachToPlayer(dom.modalVideo, (result) => {
+      hideLoadingPoster(result?.reason || 'requestVideoFrameCallback');
+    });
   } else if (window.ArchivebatePlayerCore && typeof ArchivebatePlayerCore.waitForPresentedFrame === 'function') {
     ArchivebatePlayerCore.waitForPresentedFrame(dom.modalVideo).then(res => {
-      if (res && res.presented) hideLoadingPoster();
+      if (res && res.presented) hideLoadingPoster(res.reason || 'waitForPresentedFrame');
     });
   }
 
@@ -2516,7 +2519,13 @@ async function openVideoModal(video) {
     modalPerfTracker?.mark('loadeddata');
   };
   dom.modalVideo.onplaying = () => {
-    hideLoadingPoster();
+    // Awaryjny UX failsafe dopiero po kilku sekundach ciągłego grania bez RVFC:
+    setTimeout(() => {
+      if (!modalLoaderDismissed && dom.modalVideo && dom.modalVideo.readyState >= 2) {
+        hideLoadingPoster('loader_failsafe');
+      }
+    }, 3500);
+
     setTimeout(() => {
       if (!modalStoryboardPrepared) {
         if ('requestIdleCallback' in window) {
@@ -2529,7 +2538,7 @@ async function openVideoModal(video) {
   };
   dom.modalVideo.onerror = () => {
     modalLoaderDismissed = true;
-    hideLoadingPoster();
+    hideLoadingPoster('video-error');
     showToast('Błąd ładowania strumienia. Spróbuj odświeżyć.', 'error');
   };
   dom.modalVideo.play().catch(() => {});

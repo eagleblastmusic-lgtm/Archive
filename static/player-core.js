@@ -200,14 +200,29 @@
     let activeTarget = null;
 
     const dispatchPresentedFrame = async (serial, targetTime) => {
+      let result = null;
       try {
-        await waitForPresentedFrame(video, targetTime, Math.min(1300, watchdogMs));
+        result = await waitForPresentedFrame(video, targetTime, Math.min(1300, watchdogMs));
       } catch (_) {}
+
       if (destroyed || serial !== seekSerial) return;
       clearTimeout(watchdog);
       inFlight = false;
       activeTarget = null;
-      if (typeof options.onFrame === 'function') options.onFrame(video.currentTime, targetTime);
+
+      if (!result || !result.presented) {
+        if (result?.reason === 'video-error' && typeof options.onError === 'function') {
+          options.onError(result.error);
+        } else if (typeof options.onFrameMiss === 'function') {
+          options.onFrameMiss(result || { presented: false, reason: 'unspecified' }, targetTime);
+        }
+        if (requestedTime !== null) request(requestedTime);
+        return;
+      }
+
+      if (typeof options.onFrame === 'function') {
+        options.onFrame(video.currentTime, targetTime);
+      }
       if (requestedTime !== null) request(requestedTime);
     };
 
@@ -250,6 +265,9 @@
           if (serial !== seekSerial) return;
           inFlight = false;
           activeTarget = null;
+          if (typeof options.onFrameMiss === 'function') {
+            options.onFrameMiss({ presented: false, reason: 'timeout', timedOut: true }, seekTime);
+          }
           if (requestedTime !== null) request(requestedTime);
         }, watchdogMs);
         dispatchPresentedFrame(serial, seekTime);
@@ -264,6 +282,9 @@
         if (serial !== seekSerial) return;
         inFlight = false;
         activeTarget = null;
+        if (typeof options.onFrameMiss === 'function') {
+          options.onFrameMiss({ presented: false, reason: 'timeout', timedOut: true }, seekTime);
+        }
         if (requestedTime !== null) request(requestedTime);
       }, watchdogMs);
 
@@ -432,6 +453,7 @@
       this.firstFrameSource = null;
       this.frameDetectionTimeout = false;
       this.frameMetadata = null;
+      this.loaderHiddenReason = null;
       this.mark('video_open_start');
       window.__archivebatePerfTracker = this;
     }
@@ -445,6 +467,13 @@
           performance.mark(`archivebate:${this.videoId}:${name}`);
         }
       } catch (_) {}
+    }
+
+    markLoaderHidden(reason) {
+      if (!this.marks['loader_hidden']) {
+        this.loaderHiddenReason = reason || 'unknown';
+        this.mark('loader_hidden');
+      }
     }
 
     setCacheType(type) {
@@ -482,6 +511,8 @@
         frame_detection_timeout: this.frameDetectionTimeout,
         frame_metadata: this.frameMetadata,
         is_valid_measurement: isValidFrame && !this.frameDetectionTimeout && (firstFrameElapsed !== null),
+        loader_hidden: this.getElapsed('loader_hidden'),
+        loader_hidden_reason: this.loaderHiddenReason,
         playing: this.getElapsed('playing'),
         storyboard_start: this.getElapsed('storyboard_start'),
         storyboard_quick_ready: this.getElapsed('storyboard_quick_ready'),
@@ -511,6 +542,7 @@
 
       video.addEventListener('error', () => {
         this.mark('video_error');
+        this.markLoaderHidden('video-error');
         this.report();
       }, { once: true });
 
@@ -523,6 +555,7 @@
             presentationTime: result.presentationTime,
             presentedFrames: result.presentedFrames
           };
+          this.markLoaderHidden(result.reason || 'requestVideoFrameCallback');
           if (typeof onFirstFrameCallback === 'function') {
             onFirstFrameCallback(result);
           }

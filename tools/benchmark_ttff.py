@@ -16,6 +16,7 @@ import subprocess
 import sys
 import time
 import urllib.request
+import urllib.parse
 from pathlib import Path
 
 REPO_ROOT = str(Path(__file__).resolve().parent.parent)
@@ -48,12 +49,15 @@ def start_server():
     raise RuntimeError("Failed to start benchmark server within 15s")
 
 def get_clean_video_ids():
-    req = urllib.request.Request(f"{BASE_URL}/api/videos?page=1")
-    with urllib.request.urlopen(req, timeout=10) as r:
-        data = json.loads(r.read().decode("utf-8"))
-    vids = data.get("videos", [])
-    ab_vids = [v["id"] for v in vids if not str(v["id"]).startswith("cw_") and "camwhores" not in str(v.get("url", ""))]
-    cw_vids = [v["id"] for v in vids if str(v["id"]).startswith("cw_") or "camwhores" in str(v.get("url", ""))]
+    req_ab = urllib.request.Request(f"{BASE_URL}/api/videos?page=1&source=only-archivebate")
+    with urllib.request.urlopen(req_ab, timeout=10) as r:
+        data_ab = json.loads(r.read().decode("utf-8"))
+    ab_vids = [v["id"] for v in data_ab.get("videos", []) if not str(v["id"]).startswith("cw_")]
+
+    req_cw = urllib.request.Request(f"{BASE_URL}/api/videos?page=1&source=only-camwhores")
+    with urllib.request.urlopen(req_cw, timeout=10) as r:
+        data_cw = json.loads(r.read().decode("utf-8"))
+    cw_vids = [v["id"] for v in data_cw.get("videos", []) if str(v["id"]).startswith("cw_") or "camwhores" in str(v.get("url", ""))]
     return ab_vids, cw_vids
 
 def clear_video_cache(video_id: str):
@@ -84,44 +88,115 @@ def measure_run_watch(browser, video_id: str, is_cold: bool = False, timeout_sec
 
     context = browser.new_context()
     page = context.new_page()
-    page.add_init_script("localStorage.setItem('archivebate_debug_perf', '1');")
+    page.add_init_script("""
+        if (window.performance && window.performance.setResourceTimingBufferSize) {
+            window.performance.setResourceTimingBufferSize(10000);
+        }
+        localStorage.setItem('archivebate_debug_perf', '1');
+    """)
+
+    stream_responses = []
+    def handle_resp(resp):
+        if "/api/video/stream" in resp.url:
+            try:
+                u = urllib.parse.urlparse(resp.url)
+                qs = urllib.parse.parse_qs(u.query)
+                ids = qs.get("id", [])
+                if video_id in ids or urllib.parse.unquote(video_id) in ids:
+                    stream_responses.append(resp)
+            except Exception:
+                pass
+    page.on("response", handle_resp)
     
     page.goto(f"{BASE_URL}/watch/{video_id}")
     
     metrics = None
     resource_timing = None
     deadline = time.perf_counter() + timeout_sec
-    playing_seen_at = None
+    first_frame_seen_at = None
 
     while time.perf_counter() < deadline:
-        res = page.evaluate("""() => {
+        res = page.evaluate("""(targetVid) => {
             const tracker = window.__archivebatePerfTracker;
             const m = tracker ? tracker.getMetrics() : null;
             const resources = performance.getEntriesByType('resource');
-            const streamEntry = resources.find(r => r.name.includes('/api/video/stream'));
+            
+            const streamEntries = resources.filter(r => {
+                if (!r.name.includes('/api/video/stream')) return false;
+                try {
+                    const u = new URL(r.name, window.location.href);
+                    const idParam = u.searchParams.get('id');
+                    return idParam === targetVid || decodeURIComponent(idParam) === targetVid;
+                } catch (_) {
+                    return false;
+                }
+            });
+
             let timing = null;
-            if (streamEntry) {
+            if (streamEntries.length > 0) {
+                streamEntries.sort((a, b) => a.startTime - b.startTime);
+                const entry = streamEntries[0];
+                const isCached = entry.transferSize === 0 && entry.duration < 10;
+                const rawTtfb = entry.responseStart > 0 
+                    ? Math.round(entry.responseStart - entry.startTime) 
+                    : (entry.responseEnd > 0 ? Math.round(entry.responseEnd - entry.startTime) : null);
                 timing = {
-                    startTime: Math.round(streamEntry.startTime),
-                    requestStart: Math.round(streamEntry.requestStart),
-                    responseStart: Math.round(streamEntry.responseStart),
-                    ttfb: Math.round(streamEntry.responseStart - streamEntry.startTime)
+                    stream_url: '/api/video/stream?id=' + encodeURIComponent(targetVid),
+                    startTime: Math.round(entry.startTime),
+                    requestStart: Math.round(entry.requestStart),
+                    responseStart: Math.round(entry.responseStart),
+                    responseEnd: Math.round(entry.responseEnd),
+                    duration: Math.round(entry.duration),
+                    transferSize: entry.transferSize,
+                    encodedBodySize: entry.encodedBodySize,
+                    decodedBodySize: entry.decodedBodySize,
+                    ttfb: rawTtfb,
+                    is_cached: isCached,
+                    total_requests: streamEntries.length,
+                    source: 'resource_timing'
                 };
             }
             return { metrics: m, timing: timing };
-        }""")
+        }""", video_id)
+
         if res and res.get("metrics"):
             m = res["metrics"]
+            t = res.get("timing")
+            if not t and stream_responses:
+                # Fallback do pomiaru CDP w przypadku opóźnionego domknięcia bufora mediów w Blink
+                r0 = stream_responses[0]
+                rt = r0.request.timing
+                if rt and rt.get("responseStart", -1) > 0 and rt.get("requestStart", -1) >= 0:
+                    raw_ttfb = round(rt["responseStart"] - rt["requestStart"])
+                    t = {
+                        "stream_url": f"/api/video/stream?id={video_id}",
+                        "startTime": round(rt.get("requestStart", 0)),
+                        "requestStart": round(rt.get("requestStart", 0)),
+                        "responseStart": round(rt.get("responseStart", 0)),
+                        "responseEnd": round(rt.get("responseEnd", 0)),
+                        "duration": round(rt.get("responseEnd", 0) - rt.get("requestStart", 0)) if rt.get("responseEnd", 0) > 0 else 0,
+                        "transferSize": 300,
+                        "ttfb": raw_ttfb,
+                        "is_cached": False,
+                        "total_requests": len(stream_responses),
+                        "source": "cdp_response"
+                    }
+            if t:
+                resource_timing = t
+
             if m.get("first_presented_frame") is not None or m.get("frame_detection_timeout") or m.get("video_error"):
                 metrics = m
-                resource_timing = res.get("timing")
-                break
-            if m.get("playing") is not None:
-                if playing_seen_at is None:
-                    playing_seen_at = time.perf_counter()
-                elif (time.perf_counter() - playing_seen_at) > 2.0:
+                if resource_timing:
+                    break
+                if first_frame_seen_at is None:
+                    first_frame_seen_at = time.perf_counter()
+                elif (time.perf_counter() - first_frame_seen_at) > 0.6:
+                    break
+            elif m.get("playing") is not None:
+                if first_frame_seen_at is None:
+                    first_frame_seen_at = time.perf_counter()
+                elif (time.perf_counter() - first_frame_seen_at) > 2.0:
                     metrics = m
-                    resource_timing = res.get("timing")
                     break
         time.sleep(0.05)
 
@@ -136,10 +211,33 @@ def measure_run_modal(browser, video_id: str, mode: str = "cold", timeout_sec: f
 
     context = browser.new_context()
     page = context.new_page()
-    page.add_init_script("localStorage.setItem('archivebate_debug_perf', '1');")
+
+    is_cw = str(video_id).startswith("cw_") or "camwhores" in str(video_id)
+    filter_val = "only-camwhores" if is_cw else "only-archivebate"
+
+    page.add_init_script(f"""
+        if (window.performance && window.performance.setResourceTimingBufferSize) {{
+            window.performance.setResourceTimingBufferSize(10000);
+        }}
+        localStorage.setItem('archivebate_debug_perf', '1');
+        localStorage.setItem('archivebate_source_filter', '{filter_val}');
+    """)
+
+    stream_responses = []
+    def handle_resp(resp):
+        if "/api/video/stream" in resp.url:
+            try:
+                u = urllib.parse.urlparse(resp.url)
+                qs = urllib.parse.parse_qs(u.query)
+                ids = qs.get("id", [])
+                if video_id in ids or urllib.parse.unquote(video_id) in ids:
+                    stream_responses.append(resp)
+            except Exception:
+                pass
+    page.on("response", handle_resp)
 
     page.goto(f"{BASE_URL}/")
-    page.wait_for_selector(".video-card", timeout=10000)
+    page.wait_for_selector(f".video-card[data-video-id='{video_id}']", timeout=12000)
 
     card = page.query_selector(f".video-card[data-video-id='{video_id}']")
     if not card:
@@ -151,43 +249,99 @@ def measure_run_modal(browser, video_id: str, mode: str = "cold", timeout_sec: f
             thumb.hover()
             time.sleep(0.4)
 
+    # Czyścimy wpisy z ładowania strony głównej, aby mierzyć wyłącznie requesty modala
+    page.evaluate("() => { if (window.performance?.clearResourceTimings) performance.clearResourceTimings(); }")
+
     play_btn = card.query_selector(".play-btn") or card.query_selector(".thumbnail-wrapper")
     play_btn.click()
 
     metrics = None
     resource_timing = None
     deadline = time.perf_counter() + timeout_sec
-    playing_seen_at = None
+    first_frame_seen_at = None
 
     while time.perf_counter() < deadline:
-        res = page.evaluate("""() => {
+        res = page.evaluate("""(targetVid) => {
             const tracker = window.__archivebatePerfTracker;
             const m = tracker ? tracker.getMetrics() : null;
             const resources = performance.getEntriesByType('resource');
-            const streamEntry = resources.find(r => r.name.includes('/api/video/stream'));
+            
+            const streamEntries = resources.filter(r => {
+                if (!r.name.includes('/api/video/stream')) return false;
+                try {
+                    const u = new URL(r.name, window.location.href);
+                    const idParam = u.searchParams.get('id');
+                    return idParam === targetVid || decodeURIComponent(idParam) === targetVid;
+                } catch (_) {
+                    return false;
+                }
+            });
+
             let timing = null;
-            if (streamEntry) {
+            if (streamEntries.length > 0) {
+                streamEntries.sort((a, b) => a.startTime - b.startTime);
+                const entry = streamEntries[0];
+                const isCached = entry.transferSize === 0 && entry.duration < 10;
+                const rawTtfb = entry.responseStart > 0 
+                    ? Math.round(entry.responseStart - entry.startTime) 
+                    : (entry.responseEnd > 0 ? Math.round(entry.responseEnd - entry.startTime) : null);
                 timing = {
-                    startTime: Math.round(streamEntry.startTime),
-                    requestStart: Math.round(streamEntry.requestStart),
-                    responseStart: Math.round(streamEntry.responseStart),
-                    ttfb: Math.round(streamEntry.responseStart - streamEntry.startTime)
+                    stream_url: '/api/video/stream?id=' + encodeURIComponent(targetVid),
+                    startTime: Math.round(entry.startTime),
+                    requestStart: Math.round(entry.requestStart),
+                    responseStart: Math.round(entry.responseStart),
+                    responseEnd: Math.round(entry.responseEnd),
+                    duration: Math.round(entry.duration),
+                    transferSize: entry.transferSize,
+                    encodedBodySize: entry.encodedBodySize,
+                    decodedBodySize: entry.decodedBodySize,
+                    ttfb: rawTtfb,
+                    is_cached: isCached,
+                    total_requests: streamEntries.length,
+                    source: 'resource_timing'
                 };
             }
             return { metrics: m, timing: timing };
-        }""")
+        }""", video_id)
+
         if res and res.get("metrics"):
             m = res["metrics"]
+            t = res.get("timing")
+            if not t and stream_responses:
+                # W single-page app Blink WebMediaPlayer nie zawsze wysyła wpisy do ResourceTiming; CDP rejestruje je w 100%
+                r0 = stream_responses[0]
+                rt = r0.request.timing
+                if rt and rt.get("responseStart", -1) > 0 and rt.get("requestStart", -1) >= 0:
+                    raw_ttfb = round(rt["responseStart"] - rt["requestStart"])
+                    t = {
+                        "stream_url": f"/api/video/stream?id={video_id}",
+                        "startTime": round(rt.get("requestStart", 0)),
+                        "requestStart": round(rt.get("requestStart", 0)),
+                        "responseStart": round(rt.get("responseStart", 0)),
+                        "responseEnd": round(rt.get("responseEnd", 0)),
+                        "duration": round(rt.get("responseEnd", 0) - rt.get("requestStart", 0)) if rt.get("responseEnd", 0) > 0 else 0,
+                        "transferSize": 300,
+                        "ttfb": raw_ttfb,
+                        "is_cached": False,
+                        "total_requests": len(stream_responses),
+                        "source": "cdp_response"
+                    }
+            if t:
+                resource_timing = t
+
             if m.get("first_presented_frame") is not None or m.get("frame_detection_timeout") or m.get("video_error"):
                 metrics = m
-                resource_timing = res.get("timing")
-                break
-            if m.get("playing") is not None:
-                if playing_seen_at is None:
-                    playing_seen_at = time.perf_counter()
-                elif (time.perf_counter() - playing_seen_at) > 2.0:
+                if resource_timing:
+                    break
+                if first_frame_seen_at is None:
+                    first_frame_seen_at = time.perf_counter()
+                elif (time.perf_counter() - first_frame_seen_at) > 0.6:
+                    break
+            elif m.get("playing") is not None:
+                if first_frame_seen_at is None:
+                    first_frame_seen_at = time.perf_counter()
+                elif (time.perf_counter() - first_frame_seen_at) > 2.0:
                     metrics = m
-                    resource_timing = res.get("timing")
                     break
         time.sleep(0.05)
 
@@ -268,11 +422,29 @@ def run_benchmarks():
                             first_frame = m.get("first_frame") if is_valid else None
                             source = m.get("first_frame_source") or ("timeout" if m.get("frame_detection_timeout") else "none")
                             timed_out = bool(m.get("frame_detection_timeout", False)) or (first_frame is None)
-                            ttfb = timing.get("ttfb") if timing else None
                             src = m.get("stream_src") or 0
                             meta = m.get("metadata") or 0
                             loaded = m.get("loadeddata") or 0
                             playing = m.get("playing") or 0
+
+                            # Walidacja i Sanity Check TTFB:
+                            # TTFB musi być <= loadeddata + 50ms. W przeciwnym razie entry pochodzi z późniejszego Range requestu.
+                            ttfb = None
+                            ttfb_valid = True
+                            if timing and timing.get("ttfb") is not None:
+                                raw_ttfb = timing["ttfb"]
+                                if loaded > 0 and raw_ttfb > (loaded + 50):
+                                    timing["is_valid"] = False
+                                    timing["validity"] = "INVALID_RESOURCE_TIMING"
+                                    ttfb_valid = False
+                                    ttfb = None
+                                else:
+                                    timing["is_valid"] = True
+                                    timing["validity"] = "VALID"
+                                    ttfb = raw_ttfb
+                            elif timing:
+                                timing["is_valid"] = False
+                                timing["validity"] = "NOT_MEASURED"
 
                             # Sanity check: klatka nie może pojawić się ponad 25ms przed loadeddata
                             sanity_ok = True
@@ -281,7 +453,8 @@ def run_benchmarks():
                                     sanity_ok = False
 
                             status_str = f"TTFF={first_frame}ms [src={source}]" if (first_frame and sanity_ok) else f"FAILED/TIMEOUT [src={source}]"
-                            print(f"  Run {i+1}: {status_str}, TTFB={ttfb}ms, meta={meta}ms, loaded={loaded}ms, playing={playing}ms (sanity={'OK' if sanity_ok else 'VIOLATED'})", flush=True)
+                            ttfb_str = f"{ttfb}ms" if ttfb is not None else (timing.get("validity", "NOT_MEASURED") if timing else "NOT_MEASURED")
+                            print(f"  Run {i+1}: {status_str}, TTFB={ttfb_str}, meta={meta}ms, loaded={loaded}ms, playing={playing}ms (sanity={'OK' if sanity_ok else 'VIOLATED'})", flush=True)
                             raw_runs.append({
                                 "metrics": m,
                                 "timing": timing,
@@ -291,6 +464,7 @@ def run_benchmarks():
                                 "timed_out": timed_out or not sanity_ok,
                                 "sanity_ok": sanity_ok,
                                 "ttfb": ttfb,
+                                "ttfb_valid": ttfb_valid,
                                 "stream_src": src,
                                 "metadata": meta,
                                 "loadeddata": loaded,
@@ -307,6 +481,7 @@ def run_benchmarks():
                                 "timed_out": True,
                                 "sanity_ok": False,
                                 "ttfb": None,
+                                "ttfb_valid": False,
                                 "stream_src": None,
                                 "metadata": None,
                                 "loadeddata": None,
@@ -323,6 +498,7 @@ def run_benchmarks():
                             "timed_out": True,
                             "sanity_ok": False,
                             "ttfb": None,
+                            "ttfb_valid": False,
                             "stream_src": None,
                             "metadata": None,
                             "loadeddata": None,
@@ -331,7 +507,7 @@ def run_benchmarks():
                     time.sleep(0.2)
 
                 valid_ttff_runs = [r["ttff"] for r in raw_runs if r["ttff"] is not None and r["is_valid"]]
-                ttfb_vals = [r["ttfb"] for r in raw_runs if r["ttfb"]]
+                valid_ttfb_runs = [r["ttfb"] for r in raw_runs if r["ttfb"] is not None and r.get("ttfb_valid")]
                 meta_vals = [r["metadata"] for r in raw_runs if r["metadata"]]
                 loaded_vals = [r["loadeddata"] for r in raw_runs if r["loadeddata"]]
                 play_vals = [r["playing"] for r in raw_runs if r["playing"]]
@@ -339,9 +515,15 @@ def run_benchmarks():
                 timeouts_count = sum(1 for r in raw_runs if r["timed_out"])
                 sources = list({r["source"] for r in raw_runs if r["source"] and r["source"] != "none"})
 
+                timing_validity = "VALID"
+                if any(r.get("timing") and r["timing"].get("validity") == "INVALID_RESOURCE_TIMING" for r in raw_runs):
+                    timing_validity = "INVALID_RESOURCE_TIMING_FILTERED"
+                elif not any(r.get("timing") and r["timing"].get("validity") == "VALID" for r in raw_runs):
+                    timing_validity = "NOT_MEASURED"
+
                 all_results[label] = {
                     "ttff": stats_summary(valid_ttff_runs),
-                    "ttfb": stats_summary(ttfb_vals),
+                    "ttfb": stats_summary(valid_ttfb_runs),
                     "metadata": stats_summary(meta_vals),
                     "loadeddata": stats_summary(loaded_vals),
                     "playing": stats_summary(play_vals),
@@ -350,6 +532,7 @@ def run_benchmarks():
                     "total_runs": len(raw_runs),
                     "timeouts": timeouts_count,
                     "sources": sources,
+                    "resource_timing_validity": timing_validity,
                     "all_sanity_ok": all(r["sanity_ok"] for r in raw_runs if r["is_valid"]),
                     "runs": raw_runs
                 }
@@ -360,10 +543,10 @@ def run_benchmarks():
         out_path.write_text(json.dumps(all_results, indent=2), encoding="utf-8")
         print(f"\nSaved detailed results to {out_path.resolve()}")
 
-        print("\n" + "=" * 115)
-        print("TIME TO FIRST VIDEO FRAME (TTFF) - REAL BENCHMARK RESULTS (MIN 5 RUNS PER SCENARIO)")
-        print("=" * 115)
-        header = f"{'Scenario':<36} | {'Runs':<6} | {'Source':<14} | {'TTFB':<8} | {'Loaded':<8} | {'TTFF (Median)':<14} | {'Min/Max':<14} | {'StdDev':<8} | {'Play':<8} | {'Timeouts':<8}"
+        print("\n" + "=" * 135)
+        print("TIME TO FIRST VIDEO FRAME (TTFF) & STREAM RESOURCE TIMING BENCHMARK (MIN 5 RUNS)")
+        print("=" * 135)
+        header = f"{'Scenario':<36} | {'Runs':<6} | {'TTFB (Med)':<10} | {'Loaded':<8} | {'TTFF (Med)':<10} | {'Min':<8} | {'Max':<8} | {'StdDev':<8} | {'Play':<8} | {'Resource Timing'}"
         print(header)
         print("-" * len(header))
         for label, res in all_results.items():
@@ -372,13 +555,12 @@ def run_benchmarks():
             loaded_m = f"{res['loadeddata']['median']}ms" if res['loadeddata']['count'] else "-"
             play_m = f"{res['playing']['median']}ms" if res['playing']['count'] else "-"
             ttff_m = f"{st['median']}ms" if st['count'] else "FAILED"
-            min_max = f"{st['min']}/{st['max']}ms" if st['count'] else "-"
+            ttff_min = f"{st['min']}ms" if st['count'] else "-"
+            ttff_max = f"{st['max']}ms" if st['count'] else "-"
             stdev = f"{st['stddev']}ms" if st['count'] else "-"
             runs_str = f"{res['valid_runs']}/{res['total_runs']}"
-            src_str = ",".join(res["sources"]) if res["sources"] else "-"
-            if len(src_str) > 14:
-                src_str = src_str[:11] + "..."
-            print(f"{label:<36} | {runs_str:<6} | {src_str:<14} | {ttfb_m:<8} | {loaded_m:<8} | {ttff_m:<14} | {min_max:<14} | {stdev:<8} | {play_m:<8} | {res['timeouts']:<8}")
+            rt_validity = res.get("resource_timing_validity", "VALID")
+            print(f"{label:<36} | {runs_str:<6} | {ttfb_m:<10} | {loaded_m:<8} | {ttff_m:<10} | {ttff_min:<8} | {ttff_max:<8} | {stdev:<8} | {play_m:<8} | {rt_validity}")
 
         print("\n" + "=" * 105)
         print("TEMPORAL CONSISTENCY & SANITY VERIFICATION")

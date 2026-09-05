@@ -1288,6 +1288,439 @@ console.log(JSON.stringify(m));
         self.assertIsNone(res.get("first_frame"), "first_frame musi być odrzucone (null) przy anomaliach czasowych")
         self.assertFalse(res.get("is_valid_measurement"), "Pomiar nie może być uznany za poprawny przy first_frame < loadeddata - 25ms")
 
+    # =========================================================================
+    # TESTY SEEKERA (createPreviewSeeker): Test 1 - Test 6
+    # =========================================================================
+
+    def test_seeker_1_rvfc_success_calls_onFrame(self):
+        """Seeker Test 1: RVFC sukces -> presented=true -> onFrame zostaje wywołane."""
+        js = """
+let onFrameCalled = false;
+let reportedTarget = null;
+const listeners = {};
+const mockVideo = {
+  duration: 60,
+  readyState: 2,
+  _currentTime: 0,
+  get currentTime() { return this._currentTime; },
+  set currentTime(t) {
+    this._currentTime = t;
+    if (listeners['seeked']) setTimeout(() => listeners['seeked'].forEach(fn => fn()), 5);
+  },
+  requestVideoFrameCallback: (cb) => {
+    setTimeout(() => cb(Date.now(), { mediaTime: 20 }), 5);
+    return 1;
+  },
+  addEventListener: (ev, h) => {
+    if (!listeners[ev]) listeners[ev] = [];
+    listeners[ev].push(h);
+  },
+  removeEventListener: () => {},
+  cancelVideoFrameCallback: () => {}
+};
+const seeker = ArchivebatePlayerCore.createPreviewSeeker(mockVideo, {
+  minInterval: 10,
+  watchdogMs: 500,
+  onFrame: (cur, tgt) => { onFrameCalled = true; reportedTarget = tgt; }
+});
+seeker.request(20);
+setTimeout(() => {
+  console.log(JSON.stringify({ onFrameCalled, reportedTarget }));
+}, 80);
+"""
+        res = self.run_node_eval(js)
+        self.assertTrue(res.get("onFrameCalled"), "onFrame musi zostać wywołane po udanym RVFC")
+        self.assertEqual(res.get("reportedTarget"), 20)
+
+    def test_seeker_2_rvfc_timeout_does_not_call_onFrame(self):
+        """Seeker Test 2: RVFC timeout -> presented=false -> onFrame NIE zostaje wywołane."""
+        js = """
+let onFrameCalled = false;
+let onMissCalled = false;
+const listeners = {};
+const mockVideo = {
+  duration: 60,
+  readyState: 2,
+  _currentTime: 0,
+  get currentTime() { return this._currentTime; },
+  set currentTime(t) {
+    this._currentTime = t;
+    if (listeners['seeked']) setTimeout(() => listeners['seeked'].forEach(fn => fn()), 5);
+  },
+  requestVideoFrameCallback: () => 1, // Brak wywołania callbacku -> timeout
+  addEventListener: (ev, h) => {
+    if (!listeners[ev]) listeners[ev] = [];
+    listeners[ev].push(h);
+  },
+  removeEventListener: () => {},
+  cancelVideoFrameCallback: () => {}
+};
+const seeker = ArchivebatePlayerCore.createPreviewSeeker(mockVideo, {
+  minInterval: 10,
+  watchdogMs: 40,
+  onFrame: () => { onFrameCalled = true; },
+  onFrameMiss: () => { onMissCalled = true; }
+});
+seeker.request(20);
+setTimeout(() => {
+  console.log(JSON.stringify({ onFrameCalled, onMissCalled }));
+}, 90);
+"""
+        res = self.run_node_eval(js)
+        self.assertFalse(res.get("onFrameCalled"), "onFrame NIE MOŻE zostać wywołane na timeoutcie klatki")
+        self.assertTrue(res.get("onMissCalled"), "onFrameMiss powinno zostać wywołane przy nieudanej klatce")
+
+    def test_seeker_3_timeout_A_and_requested_B_executes_B(self):
+        """Seeker Test 3: Timeout A + requested B -> A nie blokuje kolejki, B zostaje wykonane."""
+        js = """
+let frames = [];
+const listeners = {};
+let delayA = true;
+const mockVideo = {
+  duration: 60,
+  readyState: 2,
+  _currentTime: 0,
+  get currentTime() { return this._currentTime; },
+  set currentTime(t) {
+    this._currentTime = t;
+    if (listeners['seeked']) setTimeout(() => listeners['seeked'].forEach(fn => fn()), 5);
+  },
+  requestVideoFrameCallback: (cb) => {
+    if (delayA) return 1; // target A times out
+    setTimeout(() => cb(Date.now(), { mediaTime: 30 }), 5);
+    return 2;
+  },
+  addEventListener: (ev, h) => {
+    if (!listeners[ev]) listeners[ev] = [];
+    listeners[ev].push(h);
+  },
+  removeEventListener: () => {},
+  cancelVideoFrameCallback: () => {}
+};
+const seeker = ArchivebatePlayerCore.createPreviewSeeker(mockVideo, {
+  minInterval: 10,
+  watchdogMs: 40,
+  onFrame: (cur, tgt) => { frames.push(tgt); }
+});
+seeker.request(10); // Target A
+setTimeout(() => {
+  delayA = false;
+  seeker.request(30); // Target B while A in-flight/timeout
+}, 20);
+setTimeout(() => {
+  console.log(JSON.stringify({ frames }));
+}, 140);
+"""
+        res = self.run_node_eval(js)
+        self.assertEqual(res.get("frames"), [30], "Po timeoutcie A kolejka nie może wisieć - B musi zostać poprawnie wykonane")
+
+    def test_seeker_4_stale_request_latest_request_wins(self):
+        """Seeker Test 4: Szybkie seeki A, B, C, D -> D jest finalnym frame, wcześniejsze nie nadpisują D."""
+        js = """
+let frames = [];
+const listeners = {};
+const mockVideo = {
+  duration: 60,
+  readyState: 2,
+  _currentTime: 0,
+  get currentTime() { return this._currentTime; },
+  set currentTime(t) {
+    this._currentTime = t;
+    if (listeners['seeked']) setTimeout(() => listeners['seeked'].forEach(fn => fn()), 5);
+  },
+  requestVideoFrameCallback: (cb) => {
+    const cur = mockVideo._currentTime;
+    setTimeout(() => cb(Date.now(), { mediaTime: cur }), 10);
+    return 1;
+  },
+  addEventListener: (ev, h) => {
+    if (!listeners[ev]) listeners[ev] = [];
+    listeners[ev].push(h);
+  },
+  removeEventListener: () => {},
+  cancelVideoFrameCallback: () => {}
+};
+const seeker = ArchivebatePlayerCore.createPreviewSeeker(mockVideo, {
+  minInterval: 5,
+  watchdogMs: 500,
+  onFrame: (cur, tgt) => { frames.push(tgt); }
+});
+seeker.request(10);
+seeker.request(20);
+seeker.request(30);
+seeker.request(40);
+setTimeout(() => {
+  console.log(JSON.stringify({ frames, last: frames[frames.length - 1] }));
+}, 120);
+"""
+        res = self.run_node_eval(js)
+        self.assertEqual(res.get("last"), 40, "Ostatnia zaprezentowana klatka musi być zgodna z najnowszym żądaniem (latest request wins)")
+
+    def test_seeker_5_video_error_calls_onError_not_onFrame(self):
+        """Seeker Test 5: video-error -> onFrame NIE zostaje wywołane, onError zostaje wywołane."""
+        js = """
+let onFrameCalled = false;
+let onErrorCalled = false;
+const listeners = {};
+const mockVideo = {
+  duration: 60,
+  readyState: 2,
+  _currentTime: 0,
+  error: { code: 4, message: 'Decode failed' },
+  get currentTime() { return this._currentTime; },
+  set currentTime(t) {
+    this._currentTime = t;
+    if (listeners['error']) setTimeout(() => listeners['error'].forEach(fn => fn()), 5);
+  },
+  requestVideoFrameCallback: () => 1,
+  addEventListener: (ev, h) => {
+    if (!listeners[ev]) listeners[ev] = [];
+    listeners[ev].push(h);
+  },
+  removeEventListener: () => {},
+  cancelVideoFrameCallback: () => {}
+};
+const seeker = ArchivebatePlayerCore.createPreviewSeeker(mockVideo, {
+  minInterval: 10,
+  watchdogMs: 500,
+  onFrame: () => { onFrameCalled = true; },
+  onError: () => { onErrorCalled = true; }
+});
+seeker.request(15);
+setTimeout(() => {
+  console.log(JSON.stringify({ onFrameCalled, onErrorCalled }));
+}, 60);
+"""
+        res = self.run_node_eval(js)
+        self.assertFalse(res.get("onFrameCalled"), "onFrame nie może zostać wywołane przy błędzie wideo")
+        self.assertTrue(res.get("onErrorCalled"), "onError musi zostać wywołane przy błędzie wideo")
+
+    def test_seeker_6_fallback_without_rvfc_calls_onFrame(self):
+        """Seeker Test 6: Fallback bez RVFC (loadeddata + 2x rAF) -> onFrame zostaje wywołane."""
+        js = """
+let onFrameCalled = false;
+const listeners = {};
+const mockVideo = {
+  duration: 60,
+  readyState: 1,
+  _currentTime: 0,
+  get currentTime() { return this._currentTime; },
+  set currentTime(t) {
+    this._currentTime = t;
+    if (listeners['seeked']) setTimeout(() => listeners['seeked'].forEach(fn => fn()), 5);
+    setTimeout(() => {
+      mockVideo.readyState = 2;
+      if (listeners['loadeddata']) listeners['loadeddata'].forEach(fn => fn());
+    }, 10);
+  },
+  // brak requestVideoFrameCallback
+  addEventListener: (ev, h) => {
+    if (!listeners[ev]) listeners[ev] = [];
+    listeners[ev].push(h);
+  },
+  removeEventListener: () => {}
+};
+const seeker = ArchivebatePlayerCore.createPreviewSeeker(mockVideo, {
+  minInterval: 10,
+  watchdogMs: 500,
+  onFrame: () => { onFrameCalled = true; }
+});
+seeker.request(25);
+setTimeout(() => {
+  console.log(JSON.stringify({ onFrameCalled }));
+}, 100);
+"""
+        res = self.run_node_eval(js)
+        self.assertTrue(res.get("onFrameCalled"), "Fallback double-rAF musi poprawnie zgłosić onFrame w środowiskach bez RVFC")
+
+    # =========================================================================
+    # TESTY RESOURCE TIMING / TTFB: TTFB Test A - TTFB Test D
+    # =========================================================================
+
+    def _simulate_stream_timing(self, resources, target_vid, loadeddata=None):
+        """Symulator algorytmu wyboru Resource Timing z tools/benchmark_ttff.py."""
+        stream_entries = []
+        for r in resources:
+            name = r.get("name", "")
+            if "/api/video/stream" not in name:
+                continue
+            if f"id={target_vid}" in name:
+                stream_entries.append(r)
+        
+        if not stream_entries:
+            return {"ttfb": None, "validity": "NOT_MEASURED"}
+        
+        # Sortowanie po startTime rosnąco - najwcześniejszy to startup stream request
+        stream_entries.sort(key=lambda x: x.get("startTime", 0))
+        entry = stream_entries[0]
+        raw_ttfb = round(entry.get("responseStart", 0) - entry.get("startTime", 0))
+        
+        if loadeddata is not None and loadeddata > 0 and raw_ttfb > (loadeddata + 50):
+            return {"ttfb": None, "validity": "INVALID_RESOURCE_TIMING", "raw_ttfb": raw_ttfb}
+        
+        return {"ttfb": raw_ttfb, "validity": "VALID", "is_cached": entry.get("transferSize", 100) == 0}
+
+    def test_ttfb_1_matches_exact_video_id(self):
+        """TTFB Test A: Dwa wpisy (id=A, id=B) -> benchmark dla B wybiera wyłącznie wpis B."""
+        resources = [
+            {"name": "http://127.0.0.1:8008/api/video/stream?id=vid_A", "startTime": 100, "responseStart": 300},
+            {"name": "http://127.0.0.1:8008/api/video/stream?id=vid_B", "startTime": 500, "responseStart": 850}
+        ]
+        res = self._simulate_stream_timing(resources, "vid_B")
+        self.assertEqual(res["validity"], "VALID")
+        self.assertEqual(res["ttfb"], 350)  # 850 - 500 = 350ms, a nie 200ms z vid_A!
+
+    def test_ttfb_2_multiple_ranges_picks_earliest_startup_request(self):
+        """TTFB Test B: Kilka Range requestów dla filmu B -> wybierany jest najwcześniejszy startup request."""
+        resources = [
+            {"name": "http://127.0.0.1:8008/api/video/stream?id=vid_B", "startTime": 1200, "responseStart": 1950}, # Późniejszy Range
+            {"name": "http://127.0.0.1:8008/api/video/stream?id=vid_B", "startTime": 200, "responseStart": 980}    # Początkowy stream
+        ]
+        res = self._simulate_stream_timing(resources, "vid_B")
+        self.assertEqual(res["validity"], "VALID")
+        self.assertEqual(res["ttfb"], 780)  # 980 - 200 = 780ms
+
+    def test_ttfb_3_ttfb_exceeds_loadeddata_marked_invalid_resource_timing(self):
+        """TTFB Test C: TTFB > loadeddata + 50ms -> oznaczane jako INVALID_RESOURCE_TIMING i odrzucane."""
+        resources = [
+            {"name": "http://127.0.0.1:8008/api/video/stream?id=vid_C", "startTime": 100, "responseStart": 1300} # ttfb = 1200ms
+        ]
+        # loadeddata nastąpiło w 900ms -> TTFB 1200ms jest niemożliwe dla tego samego requestu
+        res = self._simulate_stream_timing(resources, "vid_C", loadeddata=900)
+        self.assertEqual(res["validity"], "INVALID_RESOURCE_TIMING")
+        self.assertIsNone(res["ttfb"])
+
+    def test_ttfb_4_no_matching_stream_marked_not_measured(self):
+        """TTFB Test D: Brak pasującego stream requestu -> TTFB = NOT_MEASURED (brak zgadywania)."""
+        resources = [
+            {"name": "http://127.0.0.1:8008/api/video/details?id=vid_D", "startTime": 50, "responseStart": 100}
+        ]
+        res = self._simulate_stream_timing(resources, "vid_D")
+        self.assertEqual(res["validity"], "NOT_MEASURED")
+        self.assertIsNone(res["ttfb"])
+
+    # =========================================================================
+    # TESTY LOADERA: Loader Test A - Loader Test E
+    # =========================================================================
+
+    def test_loader_1_rvfc_hides_loader_with_correct_reason(self):
+        """Loader Test A: RVFC sukces -> loader_hidden zarejestrowany z reason=requestVideoFrameCallback."""
+        js = """
+const tracker = new ArchivebatePlayerCore.VideoPerfTracker('test_l1', 'modal');
+const mockVideo = {
+  requestVideoFrameCallback: (cb) => {
+    setTimeout(() => cb(100, { mediaTime: 0.1 }), 10);
+    return 1;
+  },
+  addEventListener: () => {},
+  removeEventListener: () => {},
+  cancelVideoFrameCallback: () => {}
+};
+tracker.attachToPlayer(mockVideo, () => {}, 1000);
+setTimeout(() => {
+  const m = tracker.getMetrics();
+  console.log(JSON.stringify(m));
+}, 50);
+"""
+        res = self.run_node_eval(js)
+        self.assertIsNotNone(res.get("loader_hidden"))
+        self.assertEqual(res.get("loader_hidden_reason"), "requestVideoFrameCallback")
+
+    def test_loader_2_watchdog_timeout_loader_remains_visible(self):
+        """Loader Test B: Watchdog timeout -> loader_hidden pozostaje null (loader NIE znika)."""
+        js = """
+const tracker = new ArchivebatePlayerCore.VideoPerfTracker('test_l2', 'modal');
+const mockVideo = {
+  requestVideoFrameCallback: () => 1,
+  addEventListener: () => {},
+  removeEventListener: () => {},
+  cancelVideoFrameCallback: () => {}
+};
+tracker.attachToPlayer(mockVideo, () => {}, 40);
+setTimeout(() => {
+  const m = tracker.getMetrics();
+  console.log(JSON.stringify(m));
+}, 80);
+"""
+        res = self.run_node_eval(js)
+        self.assertIsNone(res.get("loader_hidden"), "Na timeoutcie loader_hidden musi być null")
+        self.assertIsNone(res.get("loader_hidden_reason"))
+
+    def test_loader_3_playing_alone_does_not_hide_loader_immediately(self):
+        """Loader Test C: playing bez RVFC -> loader_hidden nie jest ukrywany natychmiast."""
+        js = """
+const tracker = new ArchivebatePlayerCore.VideoPerfTracker('test_l3', 'modal');
+const listeners = {};
+const mockVideo = {
+  requestVideoFrameCallback: () => 1,
+  addEventListener: (ev, h) => { listeners[ev] = h; },
+  removeEventListener: () => {},
+  cancelVideoFrameCallback: () => {}
+};
+tracker.attachToPlayer(mockVideo, () => {}, 1000);
+if (listeners['playing']) listeners['playing']();
+setTimeout(() => {
+  const m = tracker.getMetrics();
+  console.log(JSON.stringify(m));
+}, 50);
+"""
+        res = self.run_node_eval(js)
+        self.assertIsNotNone(res.get("playing"))
+        self.assertIsNone(res.get("loader_hidden"), "Samo zdarzenie playing nie może chować loadera bez potwierdzonej klatki")
+
+    def test_loader_4_fallback_loadeddata_raf_hides_loader(self):
+        """Loader Test D: Fallback loadeddata + 2x rAF -> loader_hidden z reason=loadeddata-raf-fallback."""
+        js = """
+const tracker = new ArchivebatePlayerCore.VideoPerfTracker('test_l4', 'modal');
+const listeners = {};
+const mockVideo = {
+  readyState: 0,
+  currentTime: 0.2,
+  addEventListener: (ev, h) => {
+    if (!listeners[ev]) listeners[ev] = [];
+    listeners[ev].push(h);
+  },
+  removeEventListener: () => {}
+};
+tracker.attachToPlayer(mockVideo, () => {}, 1000);
+setTimeout(() => {
+  mockVideo.readyState = 2;
+  if (listeners['loadeddata']) listeners['loadeddata'].forEach(fn => fn());
+}, 10);
+setTimeout(() => {
+  const m = tracker.getMetrics();
+  console.log(JSON.stringify(m));
+}, 100);
+"""
+        res = self.run_node_eval(js)
+        self.assertIsNotNone(res.get("loader_hidden"))
+        self.assertEqual(res.get("loader_hidden_reason"), "loadeddata-raf-fallback")
+
+    def test_loader_5_video_error_sets_error_state_and_ttff_null(self):
+        """Loader Test E: video error -> loader_hidden_reason=video-error, first_frame pozostaje null."""
+        js = """
+const tracker = new ArchivebatePlayerCore.VideoPerfTracker('test_l5', 'modal');
+const listeners = {};
+const mockVideo = {
+  requestVideoFrameCallback: () => 1,
+  addEventListener: (ev, h) => {
+    if (!listeners[ev]) listeners[ev] = [];
+    listeners[ev].push(h);
+  },
+  removeEventListener: () => {},
+  cancelVideoFrameCallback: () => {}
+};
+tracker.attachToPlayer(mockVideo, () => {}, 1000);
+if (listeners['error']) listeners['error'].forEach(fn => fn());
+setTimeout(() => {
+  const m = tracker.getMetrics();
+  console.log(JSON.stringify(m));
+}, 40);
+"""
+        res = self.run_node_eval(js)
+        self.assertIsNone(res.get("first_frame"), "first_frame przy błędzie musi być null")
+        self.assertEqual(res.get("loader_hidden_reason"), "video-error")
+
 
 if __name__ == "__main__":
     unittest.main()

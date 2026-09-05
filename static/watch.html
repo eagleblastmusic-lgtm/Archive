@@ -768,10 +768,11 @@
       }
     });
 
-    function hideWatchLoader() {
+    function hideWatchLoader(reason = 'unknown') {
       if (loaderDismissed) return;
       loaderDismissed = true;
-      logPerf('First frame painted / loader hidden');
+      perfTracker?.markLoaderHidden(reason);
+      logPerf(`First frame painted / loader hidden [${reason}]`);
       if (loader) {
         loader.style.opacity = '0';
         setTimeout(() => {
@@ -880,10 +881,12 @@
 
       // Precyzyjne wykrywanie pierwszej wyrenderowanej klatki
       if (perfTracker) {
-        perfTracker.attachToPlayer(player, hideWatchLoader);
+        perfTracker.attachToPlayer(player, (result) => {
+          hideWatchLoader(result?.reason || 'requestVideoFrameCallback');
+        });
       } else if (window.ArchivebatePlayerCore && typeof ArchivebatePlayerCore.waitForPresentedFrame === 'function') {
         ArchivebatePlayerCore.waitForPresentedFrame(player).then(res => {
-          if (res && res.presented) hideWatchLoader();
+          if (res && res.presented) hideWatchLoader(res.reason || 'waitForPresentedFrame');
         });
       }
       player.addEventListener('loadeddata', () => {
@@ -891,7 +894,13 @@
       }, { once: true });
       player.addEventListener('playing', () => {
         logPerf('player playing');
-        hideWatchLoader();
+        // Awaryjny UX failsafe dopiero po kilku sekundach ciągłego grania bez RVFC:
+        setTimeout(() => {
+          if (!loaderDismissed && player.readyState >= 2) {
+            hideWatchLoader('loader_failsafe');
+          }
+        }, 3500);
+
         // Po rozpoczęciu odtwarzania w stanie idle uruchamiamy przygotowanie storyboardu
         setTimeout(() => {
           if (!storyboardPrepared) {
@@ -906,6 +915,7 @@
 
       player.addEventListener('error', () => {
         logPerf('player error');
+        hideWatchLoader('video-error');
         if (loader) loader.innerHTML = '<div style="color: #ef4444; font-weight: 600;">Nie udało się załadować wideo. Spróbuj odświeżyć.</div>';
       }, { once: true });
 
