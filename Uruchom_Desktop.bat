@@ -5,11 +5,13 @@ cd /d "%~dp0"
 echo ============================================================
 echo      ARCHIVEBATE ^& CAMWHORES DESKTOP PRO
 echo ============================================================
-echo [1/2] Zamykanie starych procesow na porcie 8000...
-for /f "tokens=5" %%a in ('netstat -aon ^| findstr :8000 ^| findstr LISTENING') do (
-    taskkill /f /pid %%a >nul 2>&1
+
+python -c "import webview, fastapi, uvicorn" >nul 2>&1
+if errorlevel 1 (
+    echo [*] Sprawdzanie i instalowanie wymaganych bibliotek pulpitu...
+    python -m pip install -r requirements.txt --quiet
 )
 
-echo [2/2] Uruchamianie aplikacji w natywnym oknie...
+echo [*] Uruchamianie aplikacji w oknie natywnym...
 python desktop_app.py
 pause

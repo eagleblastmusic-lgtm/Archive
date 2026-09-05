@@ -50,12 +50,13 @@ class ArchivebateSession:
         """Loguje użytkownika do konta Archivebate i zachowuje czytelny powód błędu."""
         self.last_login_error = ""
         if not self.email or not self.password:
-            self.last_login_error = "Brak danych logowania. Uruchom USTAW_KONTO.bat."
-            logger.warning(self.last_login_error)
+            self.last_login_error = "NOT_CONFIGURED: Brak danych logowania w .env.local ani zmiennych środowiskowych."
+            logger.info("Brak skonfigurowanych danych konta - uruchamianie w trybie anonimowym.")
             self.is_logged_in = False
             return False
 
-        logger.info(f"Logowanie kontem {self.email}...")
+        masked = f"{self.email[:2]}***@{self.email.split('@')[-1]}" if "@" in self.email else "***"
+        logger.info(f"Logowanie kontem ({masked})...")
         self.refresh_csrf()
         if not self.csrf_token:
             self.last_login_error = "Nie udało się pobrać tokenu CSRF ze strony logowania."
@@ -109,7 +110,7 @@ class ArchivebateSession:
                 if match:
                     self.csrf_token = match.group(1)
                     self.session.headers.update({"X-CSRF-TOKEN": self.csrf_token})
-                logger.info(f"Zalogowano pomyślnie jako {self.email}!")
+                logger.info(f"Zalogowano pomyślnie jako {masked}!")
                 return True
 
             # Laravel zwykle zwraca po błędnym logowaniu redirect z powrotem do /login.

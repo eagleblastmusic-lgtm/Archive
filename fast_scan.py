@@ -44,7 +44,8 @@ TAG_CATEGORIES = [
 
 def scan_user_store():
     """1. Skanuje wszystkie profile z bazy użytkownika (ulubione, historia, obserwowani)."""
-    user_store_file = os.path.join(os.path.dirname(__file__), "data", "user_store.json")
+    from runtime_paths import get_user_store_path
+    user_store_file = get_user_store_path()
     if not os.path.exists(user_store_file):
         return
     try:

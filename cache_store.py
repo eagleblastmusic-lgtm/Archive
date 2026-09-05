@@ -82,19 +82,35 @@ class BoundedTTLCache:
         with self._lock:
             return len(self._store)
 
-BASE_DIR = Path(__file__).resolve().parent
-DATA_DIR = BASE_DIR / "data"
-FEED_CACHE_DIR = DATA_DIR / "feed_cache"
-DETAILS_CACHE_DIR = DATA_DIR / "details_cache"
-THUMBS_CACHE_DIR = DATA_DIR / "thumbs_cache"
-STORYBOARD_CACHE_DIR = DATA_DIR / "storyboard_cache"
-for _d in (DATA_DIR, FEED_CACHE_DIR, DETAILS_CACHE_DIR, THUMBS_CACHE_DIR, STORYBOARD_CACHE_DIR):
-    _d.mkdir(parents=True, exist_ok=True)
+from runtime_paths import get_runtime_data_dir, get_cache_dir, ensure_runtime_data_dirs
+
+ensure_runtime_data_dirs()
+DATA_DIR = get_runtime_data_dir()
+FEED_CACHE_DIR = get_cache_dir("feed_cache")
+DETAILS_CACHE_DIR = get_cache_dir("details_cache")
+THUMBS_CACHE_DIR = get_cache_dir("thumbs_cache")
+STORYBOARD_CACHE_DIR = get_cache_dir("storyboard_cache")
 
 _json_lock = threading.RLock()
-_host_cache_lock = threading.Lock()
-_host_safety_cache = {}  # host -> (is_safe, checked_at)
-_HOST_CACHE_TTL = 300
+
+
+def is_ip_safe(ip_obj: Any) -> bool:
+    """Sprawdza czy adres IP jest bezpiecznym, globalnym adresem publicznym.
+    
+    Odrzuca: loopback, prywatne, link-local, carrier-grade NAT, multicast, reserved,
+    unspecified oraz IPv4-mapped IPv6 w przestrzeni prywatnej.
+    """
+    if isinstance(ip_obj, ipaddress.IPv6Address) and ip_obj.ipv4_mapped:
+        ip_obj = ip_obj.ipv4_mapped
+    if not ip_obj.is_global:
+        return False
+    if ip_obj.is_private or ip_obj.is_loopback or ip_obj.is_link_local or ip_obj.is_multicast or ip_obj.is_reserved or ip_obj.is_unspecified:
+        return False
+    # Carrier-grade NAT (100.64.0.0/10)
+    cg_nat = ipaddress.ip_network("100.64.0.0/10")
+    if isinstance(ip_obj, ipaddress.IPv4Address) and ip_obj in cg_nat:
+        return False
+    return True
 
 
 def atomic_write_json(path: os.PathLike, data: Any) -> None:
@@ -138,36 +154,49 @@ def safe_cache_key(value: str) -> str:
 
 
 def is_safe_remote_url(url: str) -> bool:
-    """SSRF guard: only public http/https targets, never localhost/private/link-local."""
+    """SSRF guard: tylko publiczne, globalnie routowalne cele HTTP/HTTPS.
+    
+    Usuwa podatność na DNS Rebinding (brak 300s TTL cache dla hosta) oraz
+    weryfikuje wszystkie zwrócone rekordy DNS (IPv4 i IPv6).
+    """
     try:
         parsed = urlparse(url)
         if parsed.scheme not in ("http", "https") or not parsed.hostname:
             return False
         host = parsed.hostname.lower().rstrip(".")
-        if host in {"localhost", "localhost.localdomain"} or host.endswith(".local"):
+        if host in {"localhost", "localhost.localdomain"} or host.endswith(".local") or host.endswith(".internal"):
             return False
 
-        now = time.time()
-        with _host_cache_lock:
-            cached = _host_safety_cache.get(host)
-            if cached and now - cached[1] < _HOST_CACHE_TTL:
-                return cached[0]
-
-        # Literal IP albo jednorazowa walidacja DNS; wynik hosta cache'ujemy, żeby
-        # zabezpieczenie SSRF nie dokładało osobnego DNS lookupu do każdej miniatury.
+        # 1. Dosłowny adres IP w URL
         try:
-            ips = [ipaddress.ip_address(host)]
+            ip = ipaddress.ip_address(host)
+            return is_ip_safe(ip)
         except ValueError:
+            pass
+
+        # 2. Rozwiązanie DNS w czasie rzeczywistym (bez cache'owania bezpieczeństwa)
+        try:
+            resolved = socket.getaddrinfo(
+                host,
+                parsed.port or (443 if parsed.scheme == "https" else 80),
+                type=socket.SOCK_STREAM
+            )
+        except (socket.gaierror, ValueError, OSError):
+            return False
+
+        if not resolved:
+            return False
+
+        for item in resolved:
+            raw_ip = item[4][0]
             try:
-                ips = [ipaddress.ip_address(item[4][0]) for item in socket.getaddrinfo(host, parsed.port or 443, type=socket.SOCK_STREAM)]
-            except (socket.gaierror, ValueError):
-                with _host_cache_lock:
-                    _host_safety_cache[host] = (False, now)
+                ip = ipaddress.ip_address(raw_ip)
+                if not is_ip_safe(ip):
+                    return False
+            except ValueError:
                 return False
-        safe = all(ip.is_global for ip in ips)
-        with _host_cache_lock:
-            _host_safety_cache[host] = (safe, now)
-        return safe
+
+        return True
     except Exception:
         return False
 

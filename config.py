@@ -3,10 +3,15 @@ import os
 from pathlib import Path
 from typing import Dict, Tuple
 
+from runtime_paths import get_runtime_data_dir
+
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
+RUNTIME_DATA_DIR = get_runtime_data_dir()
 LOCAL_CREDENTIALS_FILE = DATA_DIR / "credentials.local.json"
+RUNTIME_CREDENTIALS_FILE = RUNTIME_DATA_DIR / "credentials.local.json"
 ENV_FILE = BASE_DIR / ".env.local"
+
 
 
 def _read_env_file(path: Path) -> Dict[str, str]:
@@ -40,8 +45,7 @@ def get_archivebate_credentials() -> Tuple[str, str]:
     Kolejność:
     1) prawdziwe zmienne środowiskowe,
     2) aktualna zawartość .env.local (można zmienić bez restartu),
-    3) data/credentials.local.json,
-    4) bezpieczny domyślny fallback akiraaibabe@gmail.com.
+    3) data/credentials.local.json lub %LOCALAPPDATA%/Archive/credentials.local.json.
     """
     env_email = os.getenv("ARCHIVEBATE_EMAIL", "").strip()
     env_password = os.getenv("ARCHIVEBATE_PASSWORD", "")
@@ -54,20 +58,22 @@ def get_archivebate_credentials() -> Tuple[str, str]:
     if email and password:
         return email, password
 
-    if LOCAL_CREDENTIALS_FILE.exists():
-        try:
-            data = json.loads(LOCAL_CREDENTIALS_FILE.read_text(encoding="utf-8-sig"))
-            email = str(data.get("email", "")).strip()
-            password = str(data.get("password", ""))
-            if email and password:
-                return email, password
-        except (OSError, ValueError, TypeError):
-            pass
+    for cred_file in (RUNTIME_CREDENTIALS_FILE, LOCAL_CREDENTIALS_FILE):
+        if cred_file.exists():
+            try:
+                data = json.loads(cred_file.read_text(encoding="utf-8-sig"))
+                email = str(data.get("email", "")).strip()
+                password = str(data.get("password", ""))
+                if email and password:
+                    return email, password
+            except (OSError, ValueError, TypeError):
+                pass
 
-    # Bezpieczny fallback do domyślnego konta użytkownika
-    if not email:
-        email = "akiraaibabe@gmail.com"
-    if not password:
-        password = "123BBBbbb"
+    # Brak danych logowania - kontrolowany stan NOT_CONFIGURED bez ukrytych fallbacków
+    return str(email or "").strip(), str(password or "")
 
-    return email, password
+
+def is_credentials_configured() -> bool:
+    email, password = get_archivebate_credentials()
+    return bool(email and password)
+

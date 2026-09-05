@@ -1,61 +1,91 @@
 import os
 import sys
 import time
+import json
+import socket
 import threading
-import subprocess
 import urllib.request
 import uvicorn
 import webview
 
-def kill_port_8000():
-    """Zamyka ewentualne wiszące stare procesy Pythona na porcie 8000 przed startem."""
+
+def is_port_free(port: int, host: str = "127.0.0.1") -> bool:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        try:
+            s.bind((host, port))
+            return True
+        except OSError:
+            return False
+
+
+def is_archivebate_running(url: str) -> bool:
     try:
-        output = subprocess.check_output('netstat -aon | findstr :8000', shell=True, text=True, stderr=subprocess.DEVNULL)
-        current_pid = os.getpid()
-        for line in output.strip().splitlines():
-            parts = line.split()
-            if len(parts) >= 5 and "LISTENING" in parts:
-                pid = int(parts[-1])
-                if pid != current_pid and pid > 0:
-                    subprocess.run(f'taskkill /f /pid {pid}', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        req = urllib.request.Request(f"{url}/api/status", headers={"User-Agent": "ArchiveDesktop"})
+        with urllib.request.urlopen(req, timeout=1.0) as resp:
+            if resp.status == 200:
+                data = json.loads(resp.read().decode("utf-8"))
+                return "logged_in" in data and "favorites_count" in data
     except Exception:
         pass
+    return False
 
-def start_server():
-    uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=False, log_level="warning")
 
-def wait_for_server(url="http://127.0.0.1:8000", timeout=10):
+def resolve_port(default_port: int = 8000) -> tuple[int, bool]:
+    """Zwraca (port, is_already_running).
+    Bezpieczne dla systemu — nie wykonuje ślepego 'taskkill /f'.
+    """
+    if is_archivebate_running(f"http://127.0.0.1:{default_port}"):
+        return default_port, True
+
+    if is_port_free(default_port):
+        return default_port, False
+
+    for port in range(default_port + 1, default_port + 25):
+        if is_port_free(port):
+            print(f"[Archivebate Desktop] Port {default_port} jest zajęty przez inną aplikację. Wybrano wolny port: {port}")
+            return port, False
+
+    raise RuntimeError(f"Brak wolnego portu w zakresie {default_port}-{default_port+24}")
+
+
+def start_server(port: int):
+    uvicorn.run("main:app", host="127.0.0.1", port=port, reload=False, log_level="warning")
+
+
+def wait_for_server(url: str, timeout: float = 10.0) -> bool:
     start = time.time()
     while time.time() - start < timeout:
         try:
-            with urllib.request.urlopen(url, timeout=1) as resp:
+            with urllib.request.urlopen(url, timeout=1.0) as resp:
                 if resp.status == 200:
                     return True
         except Exception:
             time.sleep(0.15)
     return False
 
+
 if __name__ == "__main__":
     print("=" * 60)
     print("   ARCHIVEBATE & CAMWHORES PRO (Aplikacja Pulpitowa)")
-    print("   Uruchamianie natywnego okna bez przeglądarki...")
+    print("   Uruchamianie natywnego okna...")
     print("=" * 60)
 
-    # 1. Zamknij ewentualny stary proces na porcie 8000
-    kill_port_8000()
-    time.sleep(0.3)
+    port, already_running = resolve_port(8000)
+    url = f"http://127.0.0.1:{port}"
 
-    # 2. Uruchom backend w osobnym wątku
-    server_thread = threading.Thread(target=start_server, daemon=True)
-    server_thread.start()
+    if not already_running:
+        server_thread = threading.Thread(target=start_server, args=(port,), daemon=True)
+        server_thread.start()
+        if not wait_for_server(url):
+            print("[Archivebate Desktop] Błąd: Serwer backendu nie zgłosił gotowości na czas.")
+            sys.exit(1)
+    else:
+        print(f"[Archivebate Desktop] Wykryto działającą instancję Archivebate pod adresem {url} — dołączam okno.")
 
-    # 3. Poczekaj na gotowość serwera
-    wait_for_server()
-
-    # 4. Natywne okno z przyspieszeniem GPU (WebView2)
+    # Natywne okno z przyspieszeniem GPU (WebView2)
     window = webview.create_window(
         title="Archivebate & Camwhores Desktop",
-        url="http://127.0.0.1:8000",
+        url=url,
         width=1440,
         height=920,
         min_size=(960, 640),

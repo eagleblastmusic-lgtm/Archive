@@ -3,16 +3,14 @@
 .env
 data/credentials.local.json
 
-# Python & Caches
+# Python, Data & Caches
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
 .pytest_cache/
-data/thumbs_cache/
-data/feed_cache/
-data/details_cache/
-data/storyboard_cache/
+data/
+
 
 # Large archives & legacy backups
 *.zip

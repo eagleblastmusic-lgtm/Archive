@@ -2,6 +2,7 @@ import unittest
 import time
 import tempfile
 import threading
+from unittest.mock import patch, MagicMock
 from pathlib import Path
 from fastapi.testclient import TestClient
 
@@ -9,7 +10,7 @@ from main import app
 from cache_store import BoundedTTLCache, safe_cache_key, atomic_write_json, read_json_cache
 from camwhores import deduplicate_videos, normalize_model_name, extract_date_signature
 from scraper import parse_date_to_sort_seconds, sort_videos_newest_first, extract_video_tags
-from storage import UserStorage
+from storage import UserStorage, SyncResult, SyncStatus
 from model_tags import ModelTagManager
 
 
@@ -283,6 +284,39 @@ class TestFastAPIRoutes(unittest.TestCase):
         self.assertTrue(any(s["value"] == "#teen" for s in data["suggestions"]))
         self.assertFalse(any(s["type"] == "model" for s in data["suggestions"]))
 
+    def test_relogin_endpoint_serializability(self):
+        r = self.client.post("/api/relogin")
+        self.assertEqual(r.status_code, 200)
+        data = r.json()
+        self.assertIn("success", data)
+        self.assertIn("status", data)
+        self.assertIsInstance(data["status"], dict)
+        self.assertIn("favorites_count", data["status"])
+        self.assertIn("account_configured", data["status"])
+
+    def test_account_sync_endpoint(self):
+        r = self.client.post("/api/account/sync?mode=merge")
+        self.assertEqual(r.status_code, 200)
+        data = r.json()
+        self.assertIn("status", data)
+        self.assertIn("favorites_count", data)
+
+    def test_favorites_toggle_endpoint(self):
+        sample = {"id": "test_toggle_vid_1", "title": "Test Toggle"}
+        r = self.client.post("/api/account/favorites/toggle", json=sample)
+        self.assertEqual(r.status_code, 200)
+        data = r.json()
+        self.assertEqual(data["id"], "test_toggle_vid_1")
+        self.assertTrue(data["is_favorite"])
+        self.assertIn("remote_synced", data)
+        self.assertIn("pending_sync", data)
+
+        # Toggle back (remove)
+        r2 = self.client.post("/api/account/favorites/toggle", json=sample)
+        self.assertEqual(r2.status_code, 200)
+        self.assertFalse(r2.json()["is_favorite"])
+
+
 
 class TestSecurityAndFileCache(unittest.TestCase):
     def test_ssrf_blocking(self):
@@ -342,5 +376,218 @@ class TestStoryboardService(unittest.TestCase):
                 self.assertEqual(img_res.headers.get("content-type"), "image/jpeg")
 
 
+class TestCredentialsSecurity(unittest.TestCase):
+    def test_no_hardcoded_credentials_fallback(self):
+        from config import get_archivebate_credentials, is_credentials_configured
+        with patch.dict("os.environ", {}, clear=True), \
+             patch("config._read_env_file", return_value={}), \
+             patch("pathlib.Path.exists", return_value=False):
+            email, password = get_archivebate_credentials()
+            self.assertEqual(email, "")
+            self.assertEqual(password, "")
+            self.assertFalse(is_credentials_configured())
+            # Nigdy nie zwraca zahardkodowanego adresu akiraaibabe
+            self.assertNotEqual(email, "akiraaibabe@gmail.com")
+
+    def test_anonymous_login_controlled_state(self):
+        from client import ArchivebateSession
+        anon_session = ArchivebateSession(email="", password="")
+        success = anon_session.login()
+        self.assertFalse(success)
+        self.assertIn("NOT_CONFIGURED", anon_session.last_login_error)
+
+
+class TestUserStorageDurabilityAndRollback(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.store_file = Path(self.tmp.name) / "durability_store.json"
+        self.storage = UserStorage(str(self.store_file))
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_fault_injection_atomic_rollback(self):
+        # 1. Normalny zapis przechodzi pomyślnie
+        self.assertTrue(self.storage.add_favorite({"id": "item_1", "title": "Vid 1"}))
+        self.assertTrue(self.storage.is_favorite("item_1"))
+
+        # 2. Wstrzyknięcie awarii dysku / uprawnień (brak miejsca, PermissionDenied)
+        with patch("storage.atomic_write_json", side_effect=OSError("Brak miejsca na dysku")):
+            res = self.storage.add_favorite({"id": "item_fail", "title": "Vid Fail"})
+            self.assertFalse(res)
+            # Kluczowe: stan w RAM ulega natychmiastowemu wycofaniu (rollback); brak fałszywego sukcesu
+            self.assertFalse(self.storage.is_favorite("item_fail"))
+            self.assertNotIn("item_fail", [v["id"] for v in self.storage.get_favorites()])
+
+        # 3. Ponowny odczyt z dysku potwierdza integralność magazynu
+        reloaded = UserStorage(str(self.store_file))
+        self.assertTrue(reloaded.is_favorite("item_1"))
+        self.assertFalse(reloaded.is_favorite("item_fail"))
+
+    def test_pending_sync_and_reconciliation(self):
+        # Dodanie ulubionego oznacza go jako oczekujący na sync zdalny
+        self.storage.add_favorite({"id": "sync_1", "title": "Sync Vid"})
+        pending = self.storage.get_pending_sync_favorites()
+        self.assertIn("sync_1", pending)
+        self.assertEqual(pending["sync_1"]["action"], "add")
+
+        synced_calls = []
+        def mock_sync(vid, action):
+            synced_calls.append((vid, action))
+            return True
+
+        reconciled = self.storage.reconcile_pending_favorites(mock_sync)
+        self.assertEqual(reconciled, 1)
+        self.assertEqual(synced_calls, [("sync_1", "add")])
+        self.assertEqual(len(self.storage.get_pending_sync_favorites()), 0)
+
+    def test_sync_mirror_mode_and_last_synced_safety(self):
+        # Ulubione lokalne z Camwhores oraz Archivebate
+        self.storage.add_favorite({"id": "cw_sample", "title": "CW Vid", "source": "camwhores"})
+        self.storage.add_favorite({"id": "ab_sample", "title": "AB Vid", "source": "archivebate"})
+
+        remote_items = [{"id": "ab_remote_only", "title": "Remote Only", "source": "archivebate"}]
+
+        # 1. Częściowa synchronizacja (np. zerwane połączenie): last_synced NIE MOŻE się przesunąć
+        self.storage.merge_remote_data(remote_items, [], [], mode="mirror", is_full_sync=False)
+        self.assertIsNone(self.storage.data.get("last_synced"))
+
+        # W trybie mirror zachowane są lokalne wpisy Camwhores (nie-archivebate)
+        fav_ids = [v["id"] for v in self.storage.get_favorites()]
+        self.assertIn("cw_sample", fav_ids)
+        self.assertIn("ab_remote_only", fav_ids)
+
+        # 2. Pełna synchronizacja: last_synced zostaje zaktualizowany
+        self.storage.merge_remote_data(remote_items, [], [], mode="merge", is_full_sync=True)
+        self.assertIsNotNone(self.storage.data.get("last_synced"))
+
+
+class TestModelTagManagerDurability(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.tags_file = Path(self.tmp.name) / "durability_tags.json"
+        self.manager = ModelTagManager(str(self.tags_file))
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_dirty_retention_on_failure(self):
+        self.manager.set_model("sweetmodel", gender="Trans", tags=["Anal"])
+        self.assertTrue(self.manager._dirty)
+
+        # Wstrzyknięcie błędu zapisu dyskowego
+        with patch("model_tags.atomic_write_json", side_effect=OSError("Disk write error")):
+            saved = self.manager.flush()
+            self.assertFalse(saved)
+            # Flaga dirty musi pozostać True do ponownej próby
+            self.assertTrue(self.manager._dirty)
+
+        # Gdy błąd ustąpi, flush kończy się sukcesem i czyści dirty
+        saved = self.manager.flush()
+        self.assertTrue(saved)
+        self.assertFalse(self.manager._dirty)
+
+
+class TestStoryboardSingleFlight(unittest.TestCase):
+    def test_single_flight_concurrent_start(self):
+        import storyboard_service
+
+        build_calls = []
+        def mock_build(vid, dur, url, qual):
+            build_calls.append((vid, qual))
+            time.sleep(0.15)
+            return {"columns": 4, "rows": 2, "frame_count": 8}
+
+        with patch.object(storyboard_service, "_build_variant", side_effect=mock_build), \
+             patch.object(storyboard_service, "_cached_variant", return_value=None):
+
+            results = []
+            def runner():
+                res = storyboard_service.start("concurrent_test_vid", 60.0, "https://example.com/v.mp4")
+                results.append(res)
+
+            threads = [threading.Thread(target=runner) for _ in range(5)]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
+
+            # Wszystkie wątki otrzymały poprawny status
+            self.assertEqual(len(results), 5)
+            for r in results:
+                self.assertIn(r.get("status"), ("building", "ready"))
+
+            # Dokładnie 1 worker został uruchomiony dla 'quick'
+            quick_calls = [c for c in build_calls if c[1] == "quick"]
+            self.assertEqual(len(quick_calls), 1)
+
+    def test_worker_failure_state_handling(self):
+        import storyboard_service
+        k = storyboard_service._key("error_test_vid")
+
+        with patch.object(storyboard_service, "_build_variant", side_effect=RuntimeError("FFmpeg failed")), \
+             patch.object(storyboard_service, "_cached_variant", return_value=None):
+
+            storyboard_service.start("error_test_vid", 30.0, "https://example.com/bad.mp4", force=True)
+            # Odczekaj na zakończenie wątku workera
+            time.sleep(0.2)
+            status = storyboard_service.get_status("error_test_vid", 30.0)
+            self.assertIn(status.get("status"), ("error", "building", "missing"))
+
+
+class TestPortResolutionSafety(unittest.TestCase):
+    def test_resolve_port_when_archivebate_running(self):
+        from desktop_app import resolve_port
+        with patch("desktop_app.is_archivebate_running", return_value=True):
+            port, already_running = resolve_port(8000)
+            self.assertEqual(port, 8000)
+            self.assertTrue(already_running)
+
+    def test_resolve_port_when_occupied_by_foreign_service(self):
+        from desktop_app import resolve_port
+        # Port 8000 zajęty przez obcy program (nie Archivebate); port 8001 jest wolny
+        with patch("desktop_app.is_archivebate_running", return_value=False), \
+             patch("desktop_app.is_port_free", side_effect=lambda p, host="127.0.0.1": p == 8001):
+            port, already_running = resolve_port(8000)
+            self.assertEqual(port, 8001)
+            self.assertFalse(already_running)
+
+
+class TestSSRFAndDNSRebinding(unittest.TestCase):
+    def test_ssrf_extended_ip_ranges_and_no_cache(self):
+        import ipaddress
+        from cache_store import is_safe_remote_url, is_ip_safe
+
+        # Loopback IPv4 & IPv6
+        self.assertFalse(is_safe_remote_url("http://127.0.0.1/"))
+        self.assertFalse(is_safe_remote_url("http://127.0.0.2/"))
+        self.assertFalse(is_safe_remote_url("http://[::1]/"))
+
+        # Private ranges RFC 1918
+        self.assertFalse(is_safe_remote_url("http://10.0.0.1/"))
+        self.assertFalse(is_safe_remote_url("http://172.16.0.1/"))
+        self.assertFalse(is_safe_remote_url("http://192.168.1.1/"))
+
+        # Link-local & Cloud metadata
+        self.assertFalse(is_safe_remote_url("http://169.254.169.254/latest/meta-data"))
+
+        # Carrier-grade NAT (100.64.0.0/10)
+        self.assertFalse(is_ip_safe(ipaddress.ip_address("100.64.0.1")))
+
+        # IPv4-mapped IPv6
+        self.assertFalse(is_ip_safe(ipaddress.ip_address("::ffff:127.0.0.1")))
+        self.assertFalse(is_ip_safe(ipaddress.ip_address("::ffff:10.0.0.1")))
+
+
+class TestRuntimePaths(unittest.TestCase):
+    def test_runtime_paths_and_migration(self):
+        import runtime_paths
+        p = runtime_paths.get_runtime_data_dir()
+        self.assertTrue(p.exists())
+        self.assertEqual(runtime_paths.get_user_store_path().name, "user_store.json")
+        self.assertEqual(runtime_paths.get_model_tags_path().name, "model_tags.json")
+
+
 if __name__ == "__main__":
     unittest.main()
+

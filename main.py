@@ -19,7 +19,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 
 from client import ArchivebateSession
 from scraper import ArchivebateScraper, POPULAR_TAGS, extract_video_tags
-from storage import storage
+from storage import storage, SyncResult, SyncStatus
 from camwhores import camwhores_scraper, deduplicate_videos, normalize_model_name
 from model_tags import model_tag_manager
 from config import get_archivebate_credentials
@@ -40,22 +40,44 @@ FEED_CACHE_DIR = str(FEED_CACHE_DIR)
 DETAILS_CACHE_DIR = str(DETAILS_CACHE_DIR)
 STORYBOARD_CACHE_DIR = str(STORYBOARD_CACHE_DIR)
 
-def sync_account_data():
-    """Zaciąga pełne listy ulubionych, historii i obserwowanych ze wszystkich stron Archivebate."""
+def sync_account_data(mode: str = "merge") -> SyncResult:
+    """Zaciąga pełne listy ulubionych, historii i obserwowanych ze wszystkich stron Archivebate.
+    Obsługuje uzgadnianie oczekujących operacji (reconciliation) oraz zwraca ustrukturyzowany SyncResult.
+    """
     try:
         print("[Archivebate Browser] Głęboka synchronizacja danych konta online...")
         if not session.email or not session.password:
-            print("[Archivebate Browser] Pomijam synchronizację konta: brak danych logowania w .env.local/ENV.")
-            return
+            msg = "Brak skonfigurowanych danych konta w .env.local ani zmiennych środowiskowych."
+            print(f"[Archivebate Browser] Pomijam synchronizację konta: {msg}")
+            return SyncResult(status=SyncStatus.NOT_CONFIGURED, message=msg)
+
         if not session.is_logged_in and not session.login():
-            return
+            err = session.last_login_error or "Logowanie nie powiodło się"
+            return SyncResult(status=SyncStatus.FAILED, message="Nie udało się zalogować do serwisu", error=err)
+
+        # 1. Uzgadnianie lokalnych zmian oczekujących (pending sync reconciliation)
+        reconciled = storage.reconcile_pending_favorites(lambda vid, act: scraper.toggle_remote_save(vid))
+
+        # 2. Pobieranie danych z konta
         watchlater = scraper.get_account_section_videos("watchlater", max_pages=15)
         history = scraper.get_account_section_videos("history", max_pages=15)
         following = scraper.get_account_section_videos("following", max_pages=15)
-        storage.merge_remote_data(watchlater, history, following)
-        print(f"[Archivebate Browser] Zsynchronizowano: {len(watchlater)} ulubionych, {len(history)} historii, {len(following)} obserwowanych.")
+
+        is_full = (len(watchlater) >= 0 and len(history) >= 0 and len(following) >= 0)
+        storage.merge_remote_data(watchlater, history, following, mode=mode, is_full_sync=is_full)
+        print(f"[Archivebate Browser] Zsynchronizowano: {len(watchlater)} ulubionych, {len(history)} historii, {len(following)} obserwowanych, {reconciled} uzgodnionych.")
+        return SyncResult(
+            status=SyncStatus.SUCCESS,
+            message="Synchronizacja konta zakończona sukcesem",
+            watchlater_count=len(watchlater),
+            history_count=len(history),
+            following_count=len(following),
+            pending_reconciled=reconciled
+        )
     except Exception as e:
         print(f"[Archivebate Browser] Błąd synchronizacji: {e}")
+        return SyncResult(status=SyncStatus.FAILED, message=f"Błąd synchronizacji: {e}", error=str(e))
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -312,15 +334,8 @@ def get_thumbnail_proxy(url: str = Query(...)):
     transparent_gif = b'GIF89a\x01\x00\x01\x00\x80\x00\x00\x00\x00\x00\xff\xff\xff!\xf9\x04\x01\x00\x00\x00\x00,\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02D\x01\x00;'
     return Response(content=transparent_gif, media_type="image/gif")
 
-@app.get("/api/status")
-async def get_status():
-    """Zwraca status natychmiast z pamięci lokalnej.
-
-    Logowanie odbywa się już w wątku startowym aplikacji. Nie wykonujemy tutaj
-    pełnej synchronizacji konta ani dodatkowego logowania, bo endpoint jest
-    odpytywany równolegle z pierwszym ekranem i wcześniej konkurował o sieć z
-    miniaturami oraz listą filmów.
-    """
+def _build_status_dict() -> dict:
+    """Zwraca słownik statusu natychmiast z pamięci lokalnej."""
     status = session.get_status()
     status["account_configured"] = bool(session.email and session.password)
     status["favorites_count"] = len(storage.data.get("favorites", []))
@@ -328,7 +343,18 @@ async def get_status():
     status["following_count"] = len(storage.data.get("following", []))
     status["last_synced"] = storage.data.get("last_synced")
     status["favorite_authors"] = storage.get_favorite_authors()
+    status["pending_sync_favorites_count"] = len(storage.get_pending_sync_favorites())
     return status
+
+@app.get("/api/status")
+def get_status():
+    """Zwraca status natychmiast z pamięci lokalnej.
+    
+    Logowanie odbywa się już w wątku startowym aplikacji. Nie wykonujemy tutaj
+    pełnej synchronizacji konta ani dodatkowego logowania, bo endpoint jest
+    odpytywany równolegle z pierwszym ekranem.
+    """
+    return _build_status_dict()
 
 @app.post("/api/relogin")
 def relogin():
@@ -339,7 +365,7 @@ def relogin():
     success = session.login()
     if success:
         threading.Thread(target=sync_account_data, daemon=True).start()
-    return {"success": success, "status": get_status()}
+    return {"success": success, "status": _build_status_dict()}
 
 # ENDPOINTY PANELU KONTA
 @app.get("/api/account/summary")
@@ -379,14 +405,23 @@ def get_account_favorites(page: int = Query(1, ge=1), per_page: int = Query(280,
 
 @app.post("/api/account/favorites/toggle")
 def toggle_favorite(video: dict = Body(...)):
-    """Dodaje lub usuwa wideo z ulubionych (lokalnie i zdalnie)."""
+    """Dodaje lub usuwa wideo z ulubionych (lokalnie i zdalnie) z pełną spójnością."""
     is_fav = storage.toggle_favorite(video)
     v_id = str(video.get("id"))
-    if v_id:
-        scraper.toggle_remote_save(v_id)
+    remote_synced = False
+    if v_id and session.is_logged_in:
+        try:
+            remote_synced = scraper.toggle_remote_save(v_id)
+            if remote_synced:
+                storage.confirm_remote_sync(v_id)
+        except Exception:
+            remote_synced = False
+
     return {
         "id": v_id,
         "is_favorite": is_fav,
+        "remote_synced": remote_synced,
+        "pending_sync": not remote_synced,
         "total_favorites": len(storage.get_favorites()),
         "favorite_authors": storage.get_favorite_authors()
     }
@@ -446,11 +481,11 @@ def get_account_following(page: int = Query(1, ge=1), per_page: int = Query(280,
     }
 
 @app.post("/api/account/sync")
-def sync_account():
-    """Wymusza pełną synchronizację z kontem Archivebate."""
-    sync_account_data()
+def sync_account(mode: str = Query("merge")):
+    """Wymusza pełną synchronizację z kontem Archivebate (mode=merge lub mode=mirror)."""
+    res = sync_account_data(mode=mode)
     return {
-        "success": True,
+        **res.to_dict(),
         "favorites_count": len(storage.get_favorites()),
         "history_count": len(storage.get_history()),
         "following_count": len(storage.get_following()),
@@ -943,8 +978,12 @@ def stream_video_proxy(url: str = Query(None), id: str = Query(None), embed: str
                 for chunk in req.iter_content(chunk_size=1024 * 64):
                     if chunk:
                         yield chunk
-            except Exception:
-                pass
+            except Exception as e:
+                # Nie połykamy wyjątku milcząco; logujemy bez ujawniania tokenów i re-raise,
+                # aby serwer ASGI zerwał połączenie TCP informując klienta o ucięciu strumienia.
+                import logging
+                logging.getLogger("proxy_stream").warning(f"Przerwano strumień wideo {clean_id}: {type(e).__name__}")
+                raise
             finally:
                 req.close()
 

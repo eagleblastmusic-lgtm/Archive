@@ -28,6 +28,7 @@ FULL_WORKERS = 3
 _MAX_STATES = 300
 _state_lock = threading.Lock()
 _states: Dict[str, Dict[str, object]] = {}
+_active_workers: Dict[str, threading.Thread] = {}
 
 
 def _set_state(key: str, val: dict) -> None:
@@ -244,41 +245,64 @@ def start(video_id: str, duration: float, source_url: str, force: bool = False) 
 
     quick = _cached_variant(video_id, duration, "quick")
     k = _key(video_id)
+
     with _state_lock:
+        active_thread = _active_workers.get(k)
+        if active_thread and active_thread.is_alive():
+            # Dokładnie jeden worker na dany klucz; zwracamy stan bez uruchamiania kolejnego wątku
+            return dict(_states.get(k) or {"status": "building", "stage": "quick"})
+
         current = dict(_states.get(k) or {})
 
-    # QUICK już istnieje: oddajemy go natychmiast; FULL może nadal budować się w tle.
-    if quick:
-        if not current or current.get("upgrade_status") not in ("building", "ready"):
+        # QUICK już istnieje: oddajemy go natychmiast; FULL może nadal budować się w tle.
+        if quick:
+            if current.get("upgrade_status") in ("building", "ready"):
+                return {"status": "ready", **quick, "upgrade_status": current.get("upgrade_status")}
+
+            # Atomowe zaznaczenie stanu pod zamkiem przed wystartowaniem wątku
+            _states[k] = {"status": "ready", **quick, "upgrade_status": "building"}
+
             def upgrade_worker():
-                _set_state(k, {"status": "ready", **quick, "upgrade_status": "building"})
                 try:
                     full_result = _build_variant(video_id, duration, source_url, "full")
                     _set_state(k, {"status": "ready", **full_result, "upgrade_status": "ready"})
                 except Exception as exc:
                     _set_state(k, {"status": "ready", **quick, "upgrade_status": "error", "upgrade_error": str(exc)})
-            threading.Thread(target=upgrade_worker, daemon=True, name=f"storyboard-full-{k[:8]}").start()
-        return {"status": "ready", **quick, "upgrade_status": "building"}
+                finally:
+                    with _state_lock:
+                        _active_workers.pop(k, None)
 
-    if current and current.get("status") == "building":
-        return current
-    if current and current.get("status") == "error" and not force:
-        if time.time() - float(current.get("finished_at") or 0) < 30:
+            t = threading.Thread(target=upgrade_worker, daemon=True, name=f"storyboard-full-{k[:8]}")
+            _active_workers[k] = t
+            t.start()
+            return {"status": "ready", **quick, "upgrade_status": "building"}
+
+        if current.get("status") == "building":
             return current
+        if current.get("status") == "error" and not force:
+            if time.time() - float(current.get("finished_at") or 0) < 30:
+                return current
 
-    _set_state(k, {"status": "building", "stage": "quick", "started_at": int(time.time())})
+        # Atomowe zaznaczenie stanu budowy QUICK pod zamkiem
+        state_building = {"status": "building", "stage": "quick", "started_at": int(time.time())}
+        _states[k] = state_building
 
-    def worker():
-        try:
-            quick_result = _build_variant(video_id, duration, source_url, "quick")
-            _set_state(k, {"status": "ready", **quick_result, "upgrade_status": "building"})
+        def worker():
             try:
-                full_result = _build_variant(video_id, duration, source_url, "full")
-                _set_state(k, {"status": "ready", **full_result, "upgrade_status": "ready"})
-            except Exception as full_exc:
-                _set_state(k, {"status": "ready", **quick_result, "upgrade_status": "error", "upgrade_error": str(full_exc)})
-        except Exception as exc:
-            _set_state(k, {"status": "error", "error": str(exc), "finished_at": int(time.time())})
+                quick_result = _build_variant(video_id, duration, source_url, "quick")
+                _set_state(k, {"status": "ready", **quick_result, "upgrade_status": "building"})
+                try:
+                    full_result = _build_variant(video_id, duration, source_url, "full")
+                    _set_state(k, {"status": "ready", **full_result, "upgrade_status": "ready"})
+                except Exception as full_exc:
+                    _set_state(k, {"status": "ready", **quick_result, "upgrade_status": "error", "upgrade_error": str(full_exc)})
+            except Exception as exc:
+                _set_state(k, {"status": "error", "error": str(exc), "finished_at": int(time.time())})
+            finally:
+                with _state_lock:
+                    _active_workers.pop(k, None)
 
-    threading.Thread(target=worker, daemon=True, name=f"storyboard-{k[:8]}").start()
-    return {"status": "building", "stage": "quick"}
+        t = threading.Thread(target=worker, daemon=True, name=f"storyboard-{k[:8]}")
+        _active_workers[k] = t
+        t.start()
+        return state_building

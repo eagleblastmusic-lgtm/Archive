@@ -10,11 +10,11 @@ from concurrent.futures import ThreadPoolExecutor
 
 from cache_store import atomic_write_json
 
+from runtime_paths import get_model_tags_path
+
 logger = logging.getLogger("model_tags")
 
-DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
-MODEL_TAGS_FILE = os.path.join(DATA_DIR, "model_tags.json")
-os.makedirs(DATA_DIR, exist_ok=True)
+MODEL_TAGS_FILE = str(get_model_tags_path())
 
 HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
@@ -52,8 +52,9 @@ class ModelTagManager:
                     if self._dirty:
                         with self._lock:
                             if self._dirty:
-                                self._save()
-                                self._dirty = False
+                                if self._save():
+                                    self._dirty = False
+                                    self._last_save = time.time()
                 except Exception as e:
                     logger.warning(f"Błąd wątku zapisu model_tags: {e}")
         threading.Thread(target=_flusher, daemon=True).start()
@@ -74,11 +75,24 @@ class ModelTagManager:
                 except Exception as e:
                     logger.warning(f"Błąd odczytu model_tags.json: {e}")
 
-    def _save(self):
+    def _save(self) -> bool:
         try:
             atomic_write_json(self.db_file, self._db)
+            return True
         except Exception as e:
             logger.warning(f"Błąd zapisu model_tags.json: {e}")
+            return False
+
+    def flush(self) -> bool:
+        """Wymusza natychmiastowy zapis na dysk; czyści flagę dirty tylko w razie sukcesu."""
+        with self._lock:
+            if not self._dirty:
+                return True
+            if self._save():
+                self._dirty = False
+                self._last_save = time.time()
+                return True
+            return False
 
     def get_model(self, username: str) -> Optional[Dict[str, Any]]:
         norm = re.sub(r'[^a-z0-9]', '', str(username).lower())
@@ -103,9 +117,9 @@ class ModelTagManager:
             self._dirty = True
             now = time.time()
             if now - self._last_save > 3.0:
-                self._last_save = now
-                self._save()
-                self._dirty = False
+                if self._save():
+                    self._last_save = now
+                    self._dirty = False
 
     def get_models_with_tag(self, tag: str) -> List[str]:
         tag_lower = tag.lower().strip()
