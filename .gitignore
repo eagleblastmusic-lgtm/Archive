@@ -1,0 +1,27 @@
+# Environment & Secrets (NEVER COMMIT CREDENTIALS)
+.env.local
+.env
+data/credentials.local.json
+
+# Python & Caches
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+data/thumbs_cache/
+data/feed_cache/
+data/details_cache/
+data/storyboard_cache/
+
+# Large archives & legacy backups
+*.zip
+*.rar
+Archivebate_YOUTUBE_TIMELINE_LOGIN_FIXED/
+Nowe/
+
+# OS & Editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
