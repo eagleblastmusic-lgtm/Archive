@@ -26,7 +26,7 @@ from config import get_archivebate_credentials
 from cache_store import (
     THUMBS_CACHE_DIR, FEED_CACHE_DIR, DETAILS_CACHE_DIR, STORYBOARD_CACHE_DIR,
     atomic_write_json, read_json_cache, cache_age_seconds, safe_cache_key,
-    is_safe_remote_url, trim_cache_directory,
+    is_safe_remote_url, trim_cache_directory, SafeHTTPAdapter, SSRFSecurityError,
 )
 from storyboard_service import start as start_storyboard, get_status as get_storyboard_status, sprite_path as get_storyboard_sprite_path
 
@@ -231,9 +231,9 @@ MEMORY_CACHE_LOCK = threading.Lock()
 MEMORY_CACHE_MAX = 600
 MEMORY_CACHE = OrderedDict()
 
-# Dedykowana sesja z pulą połączeń do szybkiego pobierania miniatur równolegle
+# Dedykowana sesja z pulą bezpiecznych połączeń (ochrona na poziomie gniazda TCP przed TOCTOU/DNS Rebinding)
 thumb_session = requests.Session()
-_adapter = HTTPAdapter(pool_connections=50, pool_maxsize=50, max_retries=Retry(total=2, backoff_factor=0.1))
+_adapter = SafeHTTPAdapter(pool_connections=50, pool_maxsize=50, max_retries=Retry(total=2, backoff_factor=0.1))
 thumb_session.mount("http://", _adapter)
 thumb_session.mount("https://", _adapter)
 thumb_session.headers.update({
@@ -242,12 +242,17 @@ thumb_session.headers.update({
 })
 
 def _validated_session_get(http_session, url: str, *, headers=None, timeout=8, stream=False, max_redirects=3):
-    """GET z walidacją każdego redirectu, żeby lokalne proxy nie mogło trafić do sieci prywatnej."""
+    """GET z podwójną ochroną SSRF: walidacja redirectów URL oraz socket-level TOCTOU/DNS Rebinding guard."""
     current = url
     for _ in range(max_redirects + 1):
         if not is_safe_remote_url(current):
-            raise HTTPException(status_code=400, detail="Niedozwolony adres zdalny")
-        res = http_session.get(current, headers=headers, timeout=timeout, stream=stream, allow_redirects=False)
+            raise HTTPException(status_code=400, detail="Niedozwolony adres zdalny (ochrona SSRF)")
+        try:
+            res = http_session.get(current, headers=headers, timeout=timeout, stream=stream, allow_redirects=False)
+        except (SSRFSecurityError, requests.exceptions.RequestException) as exc:
+            if "SSRF" in str(exc) or isinstance(exc, SSRFSecurityError):
+                raise HTTPException(status_code=400, detail="Niedozwolony adres docelowy połączenia (ochrona SSRF / DNS Rebinding)")
+            raise HTTPException(status_code=502, detail=f"Błąd połączenia ze zdalnym serwerem: {type(exc).__name__}")
         if res.status_code not in (301, 302, 303, 307, 308):
             return res
         location = res.headers.get("Location")
@@ -866,9 +871,9 @@ def get_video_details(id: str = Query(...), force_refresh: bool = Query(False)):
 
     return _normalize_video_details(id, details)
 
-# Dedykowana sesja z pulą połączeń do szybkiego streamingu bez otwierania nowych gniazd TCP na każdy Range
+# Dedykowana sesja z pulą bezpiecznych połączeń streamingu (ochrona na poziomie gniazda TCP)
 stream_session = requests.Session()
-_stream_adapter = HTTPAdapter(pool_connections=64, pool_maxsize=64, max_retries=Retry(total=2, backoff_factor=0.1))
+_stream_adapter = SafeHTTPAdapter(pool_connections=64, pool_maxsize=64, max_retries=Retry(total=2, backoff_factor=0.1))
 stream_session.mount("http://", _stream_adapter)
 stream_session.mount("https://", _stream_adapter)
 

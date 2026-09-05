@@ -10,6 +10,13 @@ from pathlib import Path
 from typing import Any, Optional, Tuple
 from urllib.parse import urlparse
 
+import requests
+import requests.adapters
+import urllib3
+import urllib3.connection
+import urllib3.connectionpool
+import urllib3.util.connection
+
 class BoundedTTLCache:
     """Wątkowo-bezpieczna pamięć podręczna LRU z czasem życia (TTL) i twardym limitem wpisów."""
     def __init__(self, max_items: int = 500, default_ttl: float = 300.0):
@@ -199,6 +206,150 @@ def is_safe_remote_url(url: str) -> bool:
         return True
     except Exception:
         return False
+
+
+class SSRFSecurityError(IOError):
+    """Zgłaszany przy próbie połączenia z adresem prywatnym, loopback lub zabronionym."""
+    pass
+
+
+def safe_create_connection(
+    address: Tuple[str, int],
+    timeout=urllib3.util.connection._DEFAULT_TIMEOUT,
+    source_address=None,
+    socket_options=None,
+) -> socket.socket:
+    """Nawiązuje połączenie socketowe z walidacją adresu IP bezpośrednio przed connect().
+    
+    Eliminuje fundamentalną lukę TOCTOU (Time-of-Check to Time-of-Use) i DNS Rebinding:
+    - Host jest rozwiązywany na bieżąco.
+    - Każdy rekord DNS jest sprawdzany przez is_ip_safe().
+    - Przed wywołaniem sock.connect(sa) bezpośrednio weryfikowany jest docelowy adres IP.
+    - Jeśli jakikolwiek adres jest prywatny, loopback, link-local, cloud metadata itp.,
+      połączenie zostaje natychmiast odrzucone przed wysłaniem jakichkolwiek bajtów HTTP.
+    """
+    host, port = address
+    if host.startswith("["):
+        host = host.strip("[]")
+
+    host_lower = host.lower().rstrip(".")
+    if host_lower in {"localhost", "localhost.localdomain"} or host_lower.endswith(".local") or host_lower.endswith(".internal"):
+        raise SSRFSecurityError(f"Host '{host}' jest zablokowany przez reguły SSRF.")
+
+    # 1. Bezpośredni adres IP
+    try:
+        ip = ipaddress.ip_address(host)
+        if not is_ip_safe(ip):
+            raise SSRFSecurityError(f"Docelowy adres IP '{ip}' jest niedozwolony (ochrona SSRF).")
+        family = socket.AF_INET6 if ip.version == 6 else socket.AF_INET
+        gai_entries = [(family, socket.SOCK_STREAM, 0, "", (str(ip), port))]
+    except ValueError:
+        # 2. Rozwiązanie DNS
+        try:
+            family = urllib3.util.connection.allowed_gai_family()
+            gai_entries = socket.getaddrinfo(host, port, family, socket.SOCK_STREAM)
+        except socket.gaierror as e:
+            raise urllib3.exceptions.NameResolutionError(host, None, e) from e
+
+        if not gai_entries:
+            raise OSError(f"Brak rekordów DNS dla hosta '{host}'")
+
+        # Sprawdzamy wszystkie rekordy - jeśli jakikolwiek jest prywatny/loopback, blokujemy natychmiast!
+        for item in gai_entries:
+            raw_ip = item[4][0]
+            try:
+                ip_obj = ipaddress.ip_address(raw_ip)
+                if not is_ip_safe(ip_obj):
+                    raise SSRFSecurityError(f"Rozwiązany adres IP '{raw_ip}' dla hosta '{host}' jest niedozwolony (ochrona SSRF / DNS Rebinding).")
+            except ValueError:
+                raise SSRFSecurityError(f"Niepoprawny adres IP '{raw_ip}' dla hosta '{host}'.")
+
+    # 3. Próba nawiązania połączenia wyłącznie ze sprawdzonym adresem
+    err = None
+    for res in gai_entries:
+        af, socktype, proto, canonname, sa = res
+        try:
+            ip_conn = ipaddress.ip_address(sa[0])
+            if not is_ip_safe(ip_conn):
+                raise SSRFSecurityError(f"Próba połączenia z niebezpiecznym adresem '{sa[0]}' przerwana.")
+        except ValueError:
+            raise SSRFSecurityError(f"Niepoprawny adres gniazda: '{sa[0]}'")
+
+        sock = None
+        try:
+            sock = socket.socket(af, socktype, proto)
+            urllib3.util.connection._set_socket_options(sock, socket_options)
+            if timeout is not urllib3.util.connection._DEFAULT_TIMEOUT:
+                sock.settimeout(timeout)
+            if source_address:
+                sock.bind(source_address)
+            sock.connect(sa)
+            return sock
+        except OSError as e:
+            err = e
+            if sock is not None:
+                sock.close()
+
+    if err is not None:
+        raise err
+    raise OSError("Nie udało się połączyć z żadnym ze sprawdzonych adresów IP")
+
+
+class SafeHTTPConnection(urllib3.connection.HTTPConnection):
+    def _new_conn(self) -> socket.socket:
+        return safe_create_connection(
+            (self._dns_host, self.port),
+            self.timeout,
+            source_address=self.source_address,
+            socket_options=self.socket_options,
+        )
+
+
+class SafeHTTPSConnection(urllib3.connection.HTTPSConnection):
+    def _new_conn(self) -> socket.socket:
+        return safe_create_connection(
+            (self._dns_host, self.port),
+            self.timeout,
+            source_address=self.source_address,
+            socket_options=self.socket_options,
+        )
+
+
+class SafeHTTPConnectionPool(urllib3.connectionpool.HTTPConnectionPool):
+    ConnectionCls = SafeHTTPConnection
+
+
+class SafeHTTPSConnectionPool(urllib3.connectionpool.HTTPSConnectionPool):
+    ConnectionCls = SafeHTTPSConnection
+
+
+class SafePoolManager(urllib3.PoolManager):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.pool_classes_by_scheme = {
+            "http": SafeHTTPConnectionPool,
+            "https": SafeHTTPSConnectionPool,
+        }
+
+
+class SafeHTTPAdapter(requests.adapters.HTTPAdapter):
+    """Adapter requests wymuszający bezpieczne gniazda TCP odporne na TOCTOU i DNS Rebinding."""
+    def init_poolmanager(self, connections, maxsize, block=False, **pool_kwargs):
+        self.poolmanager = SafePoolManager(
+            num_pools=connections,
+            maxsize=maxsize,
+            block=block,
+            **pool_kwargs
+        )
+
+
+def create_safe_session(pool_connections: int = 20, pool_maxsize: int = 20) -> requests.Session:
+    """Tworzy sesję requests zabezpieczoną przed SSRF i DNS Rebinding na poziomie gniazda."""
+    sess = requests.Session()
+    adapter = SafeHTTPAdapter(pool_connections=pool_connections, pool_maxsize=pool_maxsize)
+    sess.mount("http://", adapter)
+    sess.mount("https://", adapter)
+    return sess
 
 
 def trim_cache_directory(directory: os.PathLike, max_bytes: int, preserve_suffixes=(".meta",)) -> None:

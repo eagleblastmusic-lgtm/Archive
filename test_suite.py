@@ -2,6 +2,7 @@ import unittest
 import time
 import tempfile
 import threading
+import socket
 from unittest.mock import patch, MagicMock
 from pathlib import Path
 from fastapi.testclient import TestClient
@@ -577,6 +578,50 @@ class TestSSRFAndDNSRebinding(unittest.TestCase):
         # IPv4-mapped IPv6
         self.assertFalse(is_ip_safe(ipaddress.ip_address("::ffff:127.0.0.1")))
         self.assertFalse(is_ip_safe(ipaddress.ip_address("::ffff:10.0.0.1")))
+
+    def test_safe_http_adapter_blocks_dns_rebinding_at_socket_level(self):
+        import requests
+        from cache_store import create_safe_session, SSRFSecurityError
+
+        sess = create_safe_session()
+
+        # Symulacja ataku DNS Rebinding: domena zewnętrzna w momencie tworzenia gniazda TCP
+        # zwraca adres pętli zwrotnej 127.0.0.1
+        rebinding_gai = [(socket.AF_INET, socket.SOCK_STREAM, 0, "", ("127.0.0.1", 80))]
+        with patch("socket.getaddrinfo", return_value=rebinding_gai):
+            with self.assertRaises((requests.exceptions.ConnectionError, SSRFSecurityError)) as ctx:
+                sess.get("http://rebind-attack.example.org/internal-api", timeout=2)
+            self.assertTrue("SSRF" in str(ctx.exception) or "blocked" in str(ctx.exception).lower())
+
+    def test_safe_http_adapter_blocks_direct_loopback_connection(self):
+        from cache_store import create_safe_session, SSRFSecurityError
+        import requests
+
+        sess = create_safe_session()
+        with self.assertRaises((requests.exceptions.ConnectionError, SSRFSecurityError)) as ctx:
+            sess.get("http://127.0.0.1:9999/secret", timeout=2)
+        self.assertTrue("SSRF" in str(ctx.exception) or "blocked" in str(ctx.exception).lower())
+
+
+class TestDependenciesPinning(unittest.TestCase):
+    def test_requirements_strictly_pinned_exact_versions(self):
+        req_path = Path(__file__).resolve().parent / "requirements.txt"
+        self.assertTrue(req_path.exists())
+        lines = [line.strip() for line in req_path.read_text(encoding="utf-8").splitlines() if line.strip() and not line.strip().startswith("#")]
+        self.assertGreater(len(lines), 0)
+        for line in lines:
+            self.assertIn("==", line, f"Dependency '{line}' is not strictly pinned with '=='")
+            self.assertNotIn(">=", line, f"Dependency '{line}' contains floating '>='")
+            self.assertNotIn("<=", line, f"Dependency '{line}' contains '<='")
+
+    def test_requirements_lock_exists_and_reproducible(self):
+        lock_path = Path(__file__).resolve().parent / "requirements.lock"
+        self.assertTrue(lock_path.exists())
+        content = lock_path.read_text(encoding="utf-8")
+        self.assertIn("fastapi==", content)
+        self.assertIn("uvicorn==", content)
+        self.assertIn("requests==", content)
+        self.assertIn("urllib3==", content)
 
 
 class TestRuntimePaths(unittest.TestCase):

@@ -1,0 +1,24 @@
+# Lockfile generated for reproducible production builds
+anyio==4.14.2
+certifi==2026.2.25
+cffi==2.1.1
+charset-normalizer==3.4.7
+click==8.5.0
+colorama==0.4.6
+fastapi==0.141.1
+h11==0.16.0
+httpcore==1.0.9
+httpx==0.28.1
+idna==3.11
+imageio-ffmpeg==0.6.0
+pillow==12.2.0
+pycparser==3.0
+pydantic==2.13.5
+pydantic_core==2.46.5
+pywebview==6.2.1
+requests==2.33.1
+starlette==1.6.0
+typing_extensions==4.15.0
+typing-inspection==0.4.4
+urllib3==2.6.3
+uvicorn==0.52.4
