@@ -509,6 +509,15 @@
   <script src="/static/player-core.js?v=2.2"></script>
   <script src="/static/youtube-storyboard.js?v=2.0"></script>
   <script>
+    const perfStart = performance.now();
+    const isDebugPerf = localStorage.getItem('archivebate_debug_perf') === '1';
+    function logPerf(label) {
+      if (isDebugPerf) {
+        const elapsed = Math.round(performance.now() - perfStart);
+        console.log(`[Perf Watch ${videoId}] ${label}: +${elapsed}ms`);
+      }
+    }
+
     const videoId = window.location.pathname.split('/').filter(Boolean).pop();
     const durationHint = Number(new URLSearchParams(window.location.search).get('duration') || 0);
     const playerBox = document.getElementById('playerBox');
@@ -520,6 +529,7 @@
     const loader = document.getElementById('playerLoader');
     const centerPlayOverlay = document.getElementById('centerPlayOverlay');
     const controlsBar = document.getElementById('customControlsBar');
+    const watchPoster = document.getElementById('watchLoadingPoster');
     
     const timelineContainer = document.getElementById('timelineContainer');
     const timelineTooltip = document.getElementById('timelineTooltip');
@@ -553,6 +563,8 @@
     let timelineCount = 0;
     let spriteBoard = null;
     let spriteAbort = null;
+    let storyboardPrepared = false;
+    let loaderDismissed = false;
 
     const formatTime = ArchivebatePlayerCore.formatTime;
 
@@ -756,12 +768,143 @@
       }
     });
 
+    function hideWatchLoader() {
+      if (loaderDismissed) return;
+      loaderDismissed = true;
+      logPerf('First frame painted / loader hidden');
+      if (loader) {
+        loader.style.opacity = '0';
+        setTimeout(() => {
+          if (loader && loader.style.opacity === '0') loader.style.display = 'none';
+        }, 200);
+      }
+      if (watchPoster) {
+        watchPoster.style.opacity = '0';
+        setTimeout(() => {
+          if (watchPoster && watchPoster.style.opacity === '0') watchPoster.style.display = 'none';
+        }, 350);
+      }
+    }
+
+    function prepareWatchStoryboard(dur) {
+      const isCamwhores = String(videoId).startsWith('cw_') || String(currentDetails?.url || '').includes('camwhores');
+      if (isCamwhores || !videoId || !window.ArchivebateYouTubeStoryboard) return;
+      const duration = Number(dur) > 0 ? Number(dur) : ((Number.isFinite(player.duration) && player.duration > 0) ? player.duration : (durationHint || parseDurationToSeconds(currentDetails?.duration)));
+      if (!duration || duration <= 0) return;
+      if (spriteBoard || spriteAbort) return;
+
+      const controller = new AbortController();
+      spriteAbort = controller;
+      const expectedId = String(videoId);
+
+      ArchivebateYouTubeStoryboard.prepare({
+        videoId: expectedId,
+        duration: duration,
+        signal: controller.signal,
+        onStatus: (status) => {
+          if (controller.signal.aborted || String(videoId) !== expectedId) return;
+          if (timelinePreviewStatus && status !== 'ready') {
+            timelinePreviewStatus.textContent = 'Przygotowywanie podglądu…';
+            timelinePreviewStatus.style.display = 'flex';
+          }
+        },
+        onUpgrade: (upgradedBoard) => {
+          if (controller.signal.aborted || String(videoId) !== expectedId) return;
+          spriteBoard = upgradedBoard;
+        }
+      }).then(board => {
+        if (controller.signal.aborted || String(videoId) !== expectedId) return;
+        spriteBoard = board;
+        if (timelinePreviewStatus) timelinePreviewStatus.style.display = 'none';
+      }).catch(err => {
+        if (err?.name === 'AbortError') return;
+        if (timelinePreviewStatus) {
+          timelinePreviewStatus.textContent = 'Podgląd niedostępny';
+          timelinePreviewStatus.style.display = 'flex';
+        }
+      }).finally(() => {
+        if (spriteAbort === controller) spriteAbort = null;
+      });
+    }
+
+    function triggerStoryboardOnce() {
+      if (storyboardPrepared) return;
+      storyboardPrepared = true;
+      const dur = (Number.isFinite(player.duration) && player.duration > 0) ? player.duration : (durationHint || parseDurationToSeconds(currentDetails?.duration));
+      if (dur > 0) prepareWatchStoryboard(dur);
+    }
+
     async function initWatch() {
       if (!videoId) return;
 
+      // 1. Natychmiastowy odczyt bootstrap z sessionStorage (0ms renderu klatki wstępnej i metadanych)
+      let bootstrap = null;
+      try {
+        const raw = sessionStorage.getItem('archivebate_bootstrap_' + videoId);
+        if (raw) bootstrap = JSON.parse(raw);
+      } catch (_) {}
+
+      if (bootstrap) {
+        document.title = `${bootstrap.username || 'Wideo'} — Archivebate Player`;
+        modelNameText.innerText = bootstrap.username || 'Model';
+        dateText.innerText = bootstrap.date || 'Niedawno';
+        originalBtn.href = bootstrap.url || `https://archivebate.com/watch/${videoId}`;
+        let posterBg = (bootstrap.thumbnail || bootstrap.poster || '').replace('.mp4', '.jpg');
+        const isCamwhores = String(videoId).startsWith('cw_') || String(bootstrap.url || '').includes('camwhores');
+        if (isCamwhores && posterBg.includes('/180x135/')) {
+          posterBg = posterBg.replace(/\/180x135\/\d+\.jpg/, '/preview.jpg');
+        }
+        if (watchPoster && posterBg) {
+          watchPoster.src = posterBg;
+          watchPoster.style.display = 'block';
+          watchPoster.style.opacity = '1';
+        }
+        if (posterBg) player.poster = posterBg;
+      }
+
+      // 2. BŁYSKAWICZNE PRZYPISANIE STRUMIENIA MP4 - BEZ CZEKANIA NA ZAPYTANIE O DETALE!
+      const streamUrl = `/api/video/stream?id=${encodeURIComponent(videoId)}`;
+      player.src = streamUrl;
+      logPerf('player.src assigned');
+
+      // Precyzyjne wykrywanie pierwszej wyrenderowanej klatki
+      if (window.ArchivebatePlayerCore && typeof ArchivebatePlayerCore.waitForPresentedFrame === 'function') {
+        ArchivebatePlayerCore.waitForPresentedFrame(player).then(hideWatchLoader);
+      }
+      player.addEventListener('loadeddata', () => {
+        logPerf('player loadeddata');
+        hideWatchLoader();
+      }, { once: true });
+      player.addEventListener('playing', () => {
+        logPerf('player playing');
+        hideWatchLoader();
+        // Po rozpoczęciu odtwarzania w stanie idle uruchamiamy przygotowanie storyboardu
+        setTimeout(() => {
+          if (!storyboardPrepared) {
+            if ('requestIdleCallback' in window) {
+              requestIdleCallback(() => triggerStoryboardOnce(), { timeout: 3000 });
+            } else {
+              setTimeout(triggerStoryboardOnce, 1500);
+            }
+          }
+        }, 1800);
+      }, { once: true });
+
+      player.addEventListener('error', () => {
+        logPerf('player error');
+        if (loader) loader.innerHTML = '<div style="color: #ef4444; font-weight: 600;">Nie udało się załadować wideo. Spróbuj odświeżyć.</div>';
+      }, { once: true });
+
+      // Storyboard uruchamiany na hover osi czasu (intencja użytkownika)
+      timelineContainer.addEventListener('pointerenter', triggerStoryboardOnce, { passive: true, once: true });
+
+      player.play().catch(() => {});
+
+      // 3. Równoległe pobieranie pełnych metadanych w tle
       try {
         const data = await ArchivebateAPI.getJSON(`/api/video/details?id=${encodeURIComponent(videoId)}`, { timeoutMs: 12000 });
         currentDetails = data;
+        logPerf('details received');
 
         document.title = `${data.username || 'Wideo'} — Archivebate Player`;
         modelNameText.innerText = data.username || 'Model';
@@ -793,136 +936,59 @@
         updateFavState(!!data.is_favorite);
 
         if (data.is_private) {
-          loader.innerHTML = `
-            <div style="text-align: center; max-width: 540px; padding: 28px; background: rgba(239, 68, 68, 0.08); border: 1px solid rgba(239, 68, 68, 0.25); border-radius: 12px;">
-              <i class="fa-solid fa-lock" style="font-size: 42px; color: #f59e0b; margin-bottom: 14px; display: block;"></i>
-              <div style="font-size: 17px; font-weight: 700; color: #f87171; margin-bottom: 8px;">Film prywatny na Camwhores</div>
-              <div style="font-size: 13px; color: #94a3b8; line-height: 1.6; margin-bottom: 18px;">Autor oznaczył to nagranie jako prywatne na platformie Camwhores (dostępne wyłącznie dla użytkowników wgrywających wideo).</div>
-              ${data.url ? `<a href="${data.url}" target="_blank" rel="noreferrer" style="display: inline-flex; align-items: center; gap: 8px; padding: 10px 20px; background: #1e293b; color: #f8fafc; border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; text-decoration: none; font-size: 13px; font-weight: 600;"><i class="fa-solid fa-arrow-up-right-from-square"></i> Otwórz na Camwhores</a>` : ''}
-            </div>
-          `;
+          player.pause();
+          player.removeAttribute('src');
+          player.load();
+          if (loader) {
+            loader.style.opacity = '1';
+            loader.style.display = 'flex';
+            loader.innerHTML = `
+              <div style="text-align: center; max-width: 540px; padding: 28px; background: rgba(239, 68, 68, 0.08); border: 1px solid rgba(239, 68, 68, 0.25); border-radius: 12px;">
+                <i class="fa-solid fa-lock" style="font-size: 42px; color: #f59e0b; margin-bottom: 14px; display: block;"></i>
+                <div style="font-size: 17px; font-weight: 700; color: #f87171; margin-bottom: 8px;">Film prywatny na Camwhores</div>
+                <div style="font-size: 13px; color: #94a3b8; line-height: 1.6; margin-bottom: 18px;">Autor oznaczył to nagranie jako prywatne na platformie Camwhores (dostępne wyłącznie dla użytkowników wgrywających wideo).</div>
+                ${data.url ? `<a href="${data.url}" target="_blank" rel="noreferrer" style="display: inline-flex; align-items: center; gap: 8px; padding: 10px 20px; background: #1e293b; color: #f8fafc; border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; text-decoration: none; font-size: 13px; font-weight: 600;"><i class="fa-solid fa-arrow-up-right-from-square"></i> Otwórz na Camwhores</a>` : ''}
+              </div>
+            `;
+          }
           return;
         }
 
-        // Zawsze używamy bezpiecznego lokalnego proxy strumienia MP4 bez reklam
-        const streamUrl = data.proxy_stream_url || data.direct_url;
-        if (streamUrl) {
-          player.src = streamUrl;
-          // YouTube-style storyboard. Camwhores ma własne gotowe klatki;
-          // Archivebate dostaje jeden sprite JPG generowany i cache'owany przez backend.
-          let posterBg = (data.thumbnail || data.poster || '').replace('.mp4', '.jpg');
-          const isCamwhores = String(videoId).startsWith('cw_') || String(data.url || '').includes('camwhores');
-          let watchPosterSrc = posterBg;
-          if (isCamwhores && watchPosterSrc.includes('/180x135/')) {
-            watchPosterSrc = watchPosterSrc.replace(/\/180x135\/\d+\.jpg/, '/preview.jpg');
-          }
+        // Poster w tle, jeśli nie był jeszcze ustawiony przez bootstrap
+        let posterBg = (data.thumbnail || data.poster || '').replace('.mp4', '.jpg');
+        const isCamwhores = String(videoId).startsWith('cw_') || String(data.url || '').includes('camwhores');
+        let watchPosterSrc = posterBg;
+        if (isCamwhores && watchPosterSrc.includes('/180x135/')) {
+          watchPosterSrc = watchPosterSrc.replace(/\/180x135\/\d+\.jpg/, '/preview.jpg');
+        }
 
-          const watchPoster = document.getElementById('watchLoadingPoster');
-          if (watchPoster && watchPosterSrc) {
-            watchPoster.src = watchPosterSrc;
+        if (watchPoster && watchPosterSrc && (!watchPoster.src || watchPoster.style.display === 'none')) {
+          watchPoster.src = watchPosterSrc;
+          if (!loaderDismissed) {
             watchPoster.style.display = 'block';
             watchPoster.style.opacity = '1';
           }
-          player.poster = watchPosterSrc || '';
+        }
+        if (!player.poster && watchPosterSrc) {
+          player.poster = watchPosterSrc;
+        }
 
-          previewVideo.style.display = 'none';
-          previewVideo.pause();
-          previewVideo.removeAttribute('src');
+        previewVideo.style.display = 'none';
+        previewVideo.pause();
+        previewVideo.removeAttribute('src');
 
-          if (isCamwhores && posterBg && (posterBg.includes('/180x135/') || posterBg.includes('/contents/videos_screenshots/'))) {
-            if (posterBg.includes('/180x135/')) {
-              timelinePrefix = posterBg.substring(0, posterBg.indexOf('/180x135/') + 9);
-            } else {
-              const baseFolder = posterBg.substring(0, posterBg.lastIndexOf('/') + 1);
-              timelinePrefix = `${baseFolder}180x135/`;
-            }
-            timelineCount = 15;
-            timelinePreviewImg.src = `${timelinePrefix}1.jpg`;
-            timelinePreviewImg.style.display = 'block';
-            timelinePreviewStatus.style.display = 'none';
-            for (let i = 1; i <= timelineCount; i += 1) { const img = new Image(); img.src = `${timelinePrefix}${i}.jpg`; }
+        if (isCamwhores && posterBg && (posterBg.includes('/180x135/') || posterBg.includes('/contents/videos_screenshots/'))) {
+          if (posterBg.includes('/180x135/')) {
+            timelinePrefix = posterBg.substring(0, posterBg.indexOf('/180x135/') + 9);
           } else {
-            timelinePrefix = null;
-            timelineCount = 0;
-            spriteBoard = null;
-            timelinePreviewImg.style.display = 'none';
-            timelinePreviewStatus.style.display = 'none';
+            const baseFolder = posterBg.substring(0, posterBg.lastIndexOf('/') + 1);
+            timelinePrefix = `${baseFolder}180x135/`;
           }
-
-          const prepareWatchStoryboard = (dur) => {
-            if (isCamwhores || !videoId || !window.ArchivebateYouTubeStoryboard) return;
-            const duration = Number(dur) > 0 ? Number(dur) : ((Number.isFinite(player.duration) && player.duration > 0) ? player.duration : (durationHint || parseDurationToSeconds(data?.duration)));
-            if (!duration || duration <= 0) return;
-            if (spriteBoard || spriteAbort) return;
-
-            const controller = new AbortController();
-            spriteAbort = controller;
-            const expectedId = String(videoId);
-
-            ArchivebateYouTubeStoryboard.prepare({
-              videoId: expectedId,
-              duration: duration,
-              signal: controller.signal,
-              onStatus: (status) => {
-                if (controller.signal.aborted || String(videoId) !== expectedId) return;
-                if (timelinePreviewStatus && status !== 'ready') {
-                  timelinePreviewStatus.textContent = 'Przygotowywanie podglądu…';
-                  timelinePreviewStatus.style.display = 'flex';
-                }
-              },
-              onUpgrade: (upgradedBoard) => {
-                if (controller.signal.aborted || String(videoId) !== expectedId) return;
-                spriteBoard = upgradedBoard;
-              }
-            }).then(board => {
-              if (controller.signal.aborted || String(videoId) !== expectedId) return;
-              spriteBoard = board;
-              if (timelinePreviewStatus) timelinePreviewStatus.style.display = 'none';
-            }).catch(err => {
-              if (err?.name === 'AbortError') return;
-              if (timelinePreviewStatus) {
-                timelinePreviewStatus.textContent = 'Podgląd niedostępny';
-                timelinePreviewStatus.style.display = 'flex';
-              }
-            }).finally(() => {
-              if (spriteAbort === controller) spriteAbort = null;
-            });
-          };
-
-          const durHint = durationHint || parseDurationToSeconds(data?.duration);
-          if (durHint > 0) prepareWatchStoryboard(durHint);
-
-          const hideWatchLoader = () => {
-            if (loader) {
-              loader.style.opacity = '0';
-              setTimeout(() => {
-                if (loader && loader.style.opacity === '0') loader.style.display = 'none';
-              }, 200);
-            }
-            if (watchPoster) {
-              watchPoster.style.opacity = '0';
-              setTimeout(() => {
-                if (watchPoster && watchPoster.style.opacity === '0') watchPoster.style.display = 'none';
-              }, 350);
-            }
-          };
-
-          player.addEventListener('loadedmetadata', () => {
-            hideWatchLoader();
-            prepareWatchStoryboard(player.duration);
-          }, { once: true });
-          player.onloadeddata = hideWatchLoader;
-          player.oncanplay = () => {
-            hideWatchLoader();
-            prepareWatchStoryboard();
-          };
-          player.onplaying = hideWatchLoader;
-          player.onerror = () => {
-            loader.innerHTML = '<div style="color: #ef4444; font-weight: 600;">Nie udało się załadować wideo. Spróbuj odświeżyć.</div>';
-          };
-          player.play().catch(() => {});
-        } else {
-          loader.innerHTML = '<div style="color: #ef4444; font-weight: 600;">Nie znaleziono bezpośredniego strumienia wideo.</div>';
+          timelineCount = 15;
+          timelinePreviewImg.src = `${timelinePrefix}1.jpg`;
+          timelinePreviewImg.style.display = 'block';
+          timelinePreviewStatus.style.display = 'none';
+          for (let i = 1; i <= timelineCount; i += 1) { const img = new Image(); img.src = `${timelinePrefix}${i}.jpg`; }
         }
 
         if (data.direct_url || data.download_url) {
@@ -940,7 +1006,10 @@
         }, { timeoutMs: 5000 }).catch(() => {});
 
       } catch (err) {
-        loader.innerHTML = `<div style="color: #ef4444;">${err?.message || 'Wystąpił błąd podczas pobierania detali filmu.'}</div>`;
+        logPerf('details error: ' + err?.message);
+        if (!player.src) {
+          if (loader) loader.innerHTML = `<div style="color: #ef4444;">${err?.message || 'Wystąpił błąd podczas pobierania detali filmu.'}</div>`;
+        }
       }
     }
 

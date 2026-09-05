@@ -633,6 +633,66 @@ class TestRuntimePaths(unittest.TestCase):
         self.assertEqual(runtime_paths.get_model_tags_path().name, "model_tags.json")
 
 
+class TestVideoStartupOptimization(unittest.TestCase):
+    def setUp(self):
+        self.client = TestClient(app)
+
+    def test_static_assets_versioned_caching_and_html_no_cache(self):
+        # 1. Zasoby ze znacznikiem wersji v= mają długi immutable cache
+        res_css = self.client.get("/static/style.css?v=24.0")
+        self.assertEqual(res_css.status_code, 200)
+        self.assertIn("max-age=31536000", res_css.headers.get("Cache-Control", ""))
+        self.assertIn("immutable", res_css.headers.get("Cache-Control", ""))
+
+        # 2. Pliki HTML zawsze są rewalidowane (no-cache)
+        res_root = self.client.get("/")
+        self.assertEqual(res_root.status_code, 200)
+        self.assertIn("no-cache", res_root.headers.get("Cache-Control", ""))
+
+        res_watch = self.client.get("/watch/test_vid_123")
+        self.assertEqual(res_watch.status_code, 200)
+        self.assertIn("no-cache", res_watch.headers.get("Cache-Control", ""))
+
+    def test_singleflight_details_and_stream_resolution(self):
+        from main import _details_cache_path, atomic_write_json, _fetch_details_singleflight
+        test_id = "test_singleflight_video_999"
+        p = _details_cache_path(test_id)
+        
+        # Zapisz w cache
+        sample_data = {
+            "id": test_id,
+            "username": "TestModel",
+            "direct_url": "https://cdn.example.org/sample_video.mp4",
+            "embed_url": "https://mixdrop.ag/e/test999",
+            "date": "Dzisiaj"
+        }
+        atomic_write_json(p, sample_data)
+
+        # Sprawdź odczyt singleflight
+        res = _fetch_details_singleflight(test_id)
+        self.assertIsNotNone(res)
+        self.assertEqual(res.get("direct_url"), sample_data["direct_url"])
+
+        # Zapytanie do endpointu detali
+        det_res = self.client.get(f"/api/video/details?id={test_id}")
+        self.assertEqual(det_res.status_code, 200)
+        json_data = det_res.json()
+        self.assertEqual(json_data.get("username"), "TestModel")
+        self.assertEqual(json_data.get("proxy_stream_url"), f"/api/video/stream?id={test_id}")
+
+        # Cleanup
+        try:
+            import os
+            os.remove(p)
+        except OSError:
+            pass
+
+    def test_storyboard_workers_throttled_to_protect_playback_bandwidth(self):
+        import storyboard_service
+        self.assertLessEqual(storyboard_service.QUICK_WORKERS, 2, "QUICK_WORKERS should be <= 2 to avoid starving video stream bandwidth")
+        self.assertLessEqual(storyboard_service.FULL_WORKERS, 2, "FULL_WORKERS should be <= 2 to avoid starving video stream bandwidth")
+
+
 if __name__ == "__main__":
     unittest.main()
 

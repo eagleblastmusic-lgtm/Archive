@@ -114,17 +114,24 @@ app.add_middleware(
     allow_headers=["Content-Type", "Range", "Accept"],
 )
 
-class NoCacheStaticFiles(StaticFiles):
+class OptimizedStaticFiles(StaticFiles):
     async def get_response(self, path: str, scope):
         response = await super().get_response(path, scope)
-        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
-        response.headers["Pragma"] = "no-cache"
-        response.headers["Expires"] = "0"
+        query_string = scope.get("query_string", b"").decode("latin-1", errors="ignore")
+        is_html = path.endswith(".html") or path.endswith(".htm")
+        if is_html:
+            response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+            response.headers["Pragma"] = "no-cache"
+            response.headers["Expires"] = "0"
+        elif "v=" in query_string:
+            response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        else:
+            response.headers["Cache-Control"] = "public, max-age=86400, stale-while-revalidate=604800"
         return response
 
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 os.makedirs(STATIC_DIR, exist_ok=True)
-app.mount("/static", NoCacheStaticFiles(directory=STATIC_DIR), name="static")
+app.mount("/static", OptimizedStaticFiles(directory=STATIC_DIR), name="static")
 
 def _enrich_videos(videos: list, author_filter: str = "all") -> list:
     """Dodaje flagę is_favorite, usuwa wszelkie duplikaty oraz filtruje zablokowane profile z całego programu."""
@@ -859,17 +866,20 @@ def _refresh_details_in_background(video_id: str) -> None:
 @app.get("/api/video/details")
 def get_video_details(id: str = Query(...), force_refresh: bool = Query(False)):
     """Detale z persistent cache; stary wpis jest zwracany natychmiast i odświeżany w tle."""
-    cached, mtime = read_json_cache(_details_cache_path(id))
+    clean_id = id.split("/")[-1].split("?")[0]
+    cached, mtime = read_json_cache(_details_cache_path(clean_id))
     age = cache_age_seconds(mtime)
 
     if isinstance(cached, dict) and cached and not force_refresh and age <= DETAILS_CACHE_STALE_SECONDS:
         details = cached
         if age > DETAILS_CACHE_FRESH_SECONDS:
-            _refresh_details_in_background(id)
+            _refresh_details_in_background(clean_id)
+    elif force_refresh:
+        details = _fetch_and_cache_details(clean_id)
     else:
-        details = _fetch_and_cache_details(id)
+        details = _fetch_details_singleflight(clean_id)
 
-    return _normalize_video_details(id, details)
+    return _normalize_video_details(clean_id, details)
 
 # Dedykowana sesja z pulą bezpiecznych połączeń streamingu (ochrona na poziomie gniazda TCP)
 stream_session = requests.Session()
@@ -884,27 +894,11 @@ def stream_video_proxy(url: str = Query(None), id: str = Query(None), embed: str
     embed_url = embed
 
     if not url and clean_id:
-        # Najpierw persistent details cache: po ponownym uruchomieniu odtwarzacz nie
-        # musi ponownie scrapować strony tylko po to, żeby uzyskać ostatni direct_url.
-        cached_details, cached_mtime = read_json_cache(_details_cache_path(clean_id))
-        if isinstance(cached_details, dict) and cache_age_seconds(cached_mtime) <= DETAILS_CACHE_STALE_SECONDS:
-            url = cached_details.get("direct_url")
-            embed_url = embed_url or cached_details.get("embed_url")
-        if not url:
-            with _details_fetch_lock(clean_id):
-                cached_details, cached_mtime = read_json_cache(_details_cache_path(clean_id))
-                if isinstance(cached_details, dict) and cache_age_seconds(cached_mtime) <= DETAILS_CACHE_STALE_SECONDS:
-                    url = cached_details.get("direct_url")
-                    embed_url = embed_url or cached_details.get("embed_url")
-                if not url:
-                    details = scraper.get_video_details(clean_id)
-                    url = details.get("direct_url")
-                    embed_url = embed_url or details.get("embed_url")
-                    if details:
-                        try:
-                            atomic_write_json(_details_cache_path(clean_id), details)
-                        except Exception:
-                            pass
+        # Najpierw sprawdzamy persistent/memory cache lub pojedyncze pobranie single-flight
+        details = _fetch_details_singleflight(clean_id)
+        if isinstance(details, dict):
+            url = details.get("direct_url")
+            embed_url = embed_url or details.get("embed_url")
 
     if not embed_url and clean_id and hasattr(scraper, "_details_cache") and clean_id in scraper._details_cache:
         embed_url = scraper._details_cache[clean_id]["data"].get("embed_url")

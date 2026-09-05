@@ -721,6 +721,17 @@ function handleGridAuxClick(e) {
   if (playBtn || thumbWrapper) {
     e.preventDefault();
     e.stopPropagation();
+    try {
+      sessionStorage.setItem('archivebate_bootstrap_' + v.id, JSON.stringify({
+        id: v.id,
+        username: v.username,
+        thumbnail: v.poster_proxy || v.thumbnail_proxy || v.poster,
+        date: v.date,
+        duration: v.duration,
+        platform: v.platform,
+        url: v.url
+      }));
+    } catch (_) {}
     window.open(`/watch/${v.id}`, '_blank');
   }
 }
@@ -1836,11 +1847,13 @@ function armLazyThumbnail(img) {
 }
 
 const videoDetailsInflight = new Map();
+const MAX_CONCURRENT_PREFETCH = 2;
 function prefetchVideoDetails(videoId) {
   if (!videoId) return Promise.resolve(null);
   const cached = videoDetailsCache.get(videoId);
   if (cached) return Promise.resolve(cached);
   if (videoDetailsInflight.has(videoId)) return videoDetailsInflight.get(videoId);
+  if (videoDetailsInflight.size >= MAX_CONCURRENT_PREFETCH) return Promise.resolve(null);
   const promise = ArchivebateAPI.getJSON(`/api/video/details?id=${encodeURIComponent(videoId)}`, { timeoutMs: 9000 })
     .then(details => {
       videoDetailsCache.set(videoId, details);
@@ -2148,9 +2161,28 @@ function createVideoCard(v, idx) {
     if (e.button === 0) clearTimeout(hoverPreviewTimer);
   }, { passive: true });
 
+  let cardPrefetchTimer = null;
   card.addEventListener('pointerenter', () => {
+    if (cardPrefetchTimer) clearTimeout(cardPrefetchTimer);
+    cardPrefetchTimer = setTimeout(() => {
+      prefetchVideoDetails(v.id);
+    }, 120);
+  }, { passive: true });
+
+  card.addEventListener('pointerleave', () => {
+    if (cardPrefetchTimer) {
+      clearTimeout(cardPrefetchTimer);
+      cardPrefetchTimer = null;
+    }
+  }, { passive: true });
+
+  card.addEventListener('pointerdown', () => {
+    if (cardPrefetchTimer) {
+      clearTimeout(cardPrefetchTimer);
+      cardPrefetchTimer = null;
+    }
     prefetchVideoDetails(v.id);
-  }, { passive: true, once: true });
+  }, { passive: true });
 
   return card;
 }
@@ -2302,6 +2334,19 @@ async function openVideoModal(video) {
   if (dom.modalPopoutBtn) {
     const popDur = parseDurationToSeconds(video?.duration);
     dom.modalPopoutBtn.href = `/watch/${video.id}${popDur > 0 ? `?duration=${popDur}` : ''}`;
+    dom.modalPopoutBtn.onclick = () => {
+      try {
+        sessionStorage.setItem('archivebate_bootstrap_' + video.id, JSON.stringify({
+          id: video.id,
+          username: video.username,
+          thumbnail: video.poster_proxy || video.thumbnail_proxy || video.poster,
+          date: video.date,
+          duration: video.duration,
+          platform: video.platform,
+          url: video.url
+        }));
+      } catch (_) {}
+    };
   }
   dom.modalDownloadBtn.href = '#';
   dom.modalDownloadBtn.style.display = 'none';
@@ -2333,6 +2378,134 @@ async function openVideoModal(video) {
   dom.videoModal.classList.add('active');
   document.body.style.overflow = 'hidden';
 
+  // 1. Zapis bootstrap do sessionStorage
+  if (video?.id) {
+    try {
+      sessionStorage.setItem('archivebate_bootstrap_' + video.id, JSON.stringify({
+        id: video.id,
+        username: video.username,
+        thumbnail: video.poster_proxy || video.thumbnail_proxy || video.poster,
+        date: video.date,
+        duration: video.duration,
+        platform: video.platform,
+        url: video.url
+      }));
+    } catch (_) {}
+  }
+
+  // 2. NATYCHMIASTOWE PRZYPISANIE STRUMIENIA MP4 W PLAYERZE (0ms oczekiwania na metadane)
+  const streamSource = (video && video.id)
+    ? `/api/video/stream?id=${encodeURIComponent(video.id)}`
+    : (video?.proxy_stream_url || video?.direct_url || '');
+
+  if (streamSource) {
+    dom.modalVideo.src = streamSource;
+  }
+
+  if (dom.modalTimelineProgress) dom.modalTimelineProgress.style.width = '0%';
+  if (dom.modalTimelineThumb) dom.modalTimelineThumb.style.left = '0%';
+  if (dom.modalTimelineBuffer) dom.modalTimelineBuffer.style.width = '0%';
+
+  let modalLoaderDismissed = false;
+  const hideLoadingPoster = () => {
+    if (modalLoaderDismissed) return;
+    modalLoaderDismissed = true;
+    if (dom.videoLoader) {
+      dom.videoLoader.style.opacity = '0';
+      setTimeout(() => {
+        if (dom.videoLoader && dom.videoLoader.style.opacity === '0') {
+          dom.videoLoader.style.display = 'none';
+        }
+      }, 200);
+    }
+    if (dom.modalLoadingPoster) {
+      dom.modalLoadingPoster.style.opacity = '0';
+      setTimeout(() => {
+        if (dom.modalLoadingPoster && dom.modalLoadingPoster.style.opacity === '0') {
+          dom.modalLoadingPoster.style.display = 'none';
+        }
+      }, 350);
+    }
+  };
+
+  const prepareYoutubeStoryboard = (dur) => {
+    const isCamwhores = !!state.currentTimelinePrefix;
+    if (isCamwhores || !video?.id || !window.ArchivebateYouTubeStoryboard) return;
+    const duration = Number(dur) > 0 ? Number(dur) : ((Number.isFinite(dom.modalVideo.duration) && dom.modalVideo.duration > 0) ? dom.modalVideo.duration : parseDurationToSeconds(video?.duration || state.currentVideoDetails?.duration));
+    if (!duration || duration <= 0) return;
+    if (state.timelineSpriteBoard || state.timelineSpriteAbort) return;
+
+    const controller = new AbortController();
+    state.timelineSpriteAbort = controller;
+    const expectedId = String(video.id);
+
+    ArchivebateYouTubeStoryboard.prepare({
+      videoId: expectedId,
+      duration: duration,
+      signal: controller.signal,
+      onStatus: (status) => {
+        if (controller.signal.aborted || String(state.currentVideoDetails?.id || '') !== expectedId) return;
+        if (dom.modalTimelinePreviewStatus && status !== 'ready') {
+          dom.modalTimelinePreviewStatus.textContent = 'Przygotowywanie podglądu…';
+          dom.modalTimelinePreviewStatus.style.display = 'flex';
+        }
+      },
+      onUpgrade: (upgradedBoard) => {
+        if (controller.signal.aborted || String(state.currentVideoDetails?.id || '') !== expectedId) return;
+        state.timelineSpriteBoard = upgradedBoard;
+      }
+    }).then(board => {
+      if (controller.signal.aborted || String(state.currentVideoDetails?.id || '') !== expectedId) return;
+      state.timelineSpriteBoard = board;
+      if (dom.modalTimelinePreviewStatus) dom.modalTimelinePreviewStatus.style.display = 'none';
+    }).catch(err => {
+      if (err?.name === 'AbortError') return;
+      if (dom.modalTimelinePreviewStatus) {
+        dom.modalTimelinePreviewStatus.textContent = 'Podgląd niedostępny';
+        dom.modalTimelinePreviewStatus.style.display = 'flex';
+      }
+    }).finally(() => {
+      if (state.timelineSpriteAbort === controller) state.timelineSpriteAbort = null;
+    });
+  };
+
+  let modalStoryboardPrepared = false;
+  const triggerModalStoryboardOnce = () => {
+    if (modalStoryboardPrepared) return;
+    modalStoryboardPrepared = true;
+    const durSec = parseDurationToSeconds(video.duration || state.currentVideoDetails?.duration);
+    if (durSec > 0) prepareYoutubeStoryboard(durSec);
+  };
+
+  if (dom.modalTimelineContainer) {
+    dom.modalTimelineContainer.addEventListener('pointerenter', triggerModalStoryboardOnce, { passive: true, once: true });
+  }
+
+  // Precyzyjne wykrywanie pierwszej wyrenderowanej klatki
+  if (window.ArchivebatePlayerCore && typeof ArchivebatePlayerCore.waitForPresentedFrame === 'function') {
+    ArchivebatePlayerCore.waitForPresentedFrame(dom.modalVideo).then(hideLoadingPoster);
+  }
+  dom.modalVideo.onloadeddata = hideLoadingPoster;
+  dom.modalVideo.onplaying = () => {
+    hideLoadingPoster();
+    setTimeout(() => {
+      if (!modalStoryboardPrepared) {
+        if ('requestIdleCallback' in window) {
+          requestIdleCallback(() => triggerModalStoryboardOnce(), { timeout: 3000 });
+        } else {
+          setTimeout(triggerModalStoryboardOnce, 1500);
+        }
+      }
+    }, 1800);
+  };
+  dom.modalVideo.onerror = () => {
+    modalLoaderDismissed = true;
+    hideLoadingPoster();
+    showToast('Błąd ładowania strumienia. Spróbuj odświeżyć.', 'error');
+  };
+  dom.modalVideo.play().catch(() => {});
+
+  // 3. RÓWNOLEGŁE POBIERANIE METADANYCH W TLE
   try {
     let details = (video && video.id) ? videoDetailsCache.get(video.id) : null;
     if (!details || (!details.proxy_stream_url && !details.direct_url)) {
@@ -2346,157 +2519,68 @@ async function openVideoModal(video) {
     updateModalFavButton(!!details.is_favorite);
 
     if (details.is_private) {
-      dom.videoLoader.style.display = 'none';
+      dom.modalVideo.pause();
+      dom.modalVideo.removeAttribute('src');
+      dom.modalVideo.load();
+      modalLoaderDismissed = true;
+      if (dom.videoLoader) dom.videoLoader.style.display = 'none';
+      if (dom.modalLoadingPoster) dom.modalLoadingPoster.style.display = 'none';
       showToast('Ten film jest oznaczony jako prywatny na Camwhores (dostępny tylko dla członków serwisu)', 'error', 6000);
       dom.modalKeywords.innerHTML = '<div style="color: #f87171; font-weight: 600; padding: 6px 0;"><i class="fa-solid fa-lock"></i> Film prywatny na Camwhores (dostępny wyłącznie dla zalogowanych autorów serwisu).</div>';
       return;
     }
 
-    // ZAWSZE priorytet dla bezreklamowego lokalnego proxy strumienia MP4
-    const streamSource = details.proxy_stream_url || details.direct_url;
-
-    if (streamSource) {
-      dom.modalVideo.src = streamSource;
-      
-      // Konfiguracja podglądu osi czasu (timeline)
-      const posterUrl = details.thumbnail || video.poster || '';
-      state.preloadedStoryboard = [];
-      if (video.source === 'camwhores' || String(video.id).startsWith('cw_') || (details.url && details.url.includes('camwhores'))) {
-        if (posterUrl && (posterUrl.includes('/180x135/') || posterUrl.includes('/contents/videos_screenshots/'))) {
-          let prefix = null;
-          if (posterUrl.includes('/180x135/')) {
-            prefix = posterUrl.substring(0, posterUrl.indexOf('/180x135/') + 9);
-          } else {
-            const baseFolder = posterUrl.substring(0, posterUrl.lastIndexOf('/') + 1);
-            prefix = `${baseFolder}180x135/`;
-          }
-          state.currentTimelinePrefix = prefix;
-          state.currentTimelineCount = 15;
-          if (dom.modalTimelinePreviewImg) {
-            dom.modalTimelinePreviewImg.src = `${state.currentTimelinePrefix}1.jpg`;
-            dom.modalTimelinePreviewImg.style.display = 'block';
-          }
-          if (dom.modalTimelinePreviewVideo) {
-            dom.modalTimelinePreviewVideo.style.display = 'none';
-          }
-          if (dom.modalTimelineSprite && window.ArchivebateYouTubeStoryboard) ArchivebateYouTubeStoryboard.clearFrame(dom.modalTimelineSprite);
-          if (dom.modalTimelinePreviewStatus) dom.modalTimelinePreviewStatus.style.display = 'none';
-          // BŁYSKAWICZNE PRELOADOWANIE WSZYSTKICH 15 KLATEK W PAMIĘCI PRZEGLĄDARKI (0ms opóźnienia)
-          for (let i = 1; i <= 15; i++) {
-            const preImg = new Image();
-            preImg.src = `${state.currentTimelinePrefix}${i}.jpg`;
-            state.preloadedStoryboard.push(preImg);
-          }
+    // Konfiguracja podglądu osi czasu (timeline)
+    const posterUrl = details.thumbnail || video.poster || '';
+    state.preloadedStoryboard = [];
+    if (video.source === 'camwhores' || String(video.id).startsWith('cw_') || (details.url && details.url.includes('camwhores'))) {
+      if (posterUrl && (posterUrl.includes('/180x135/') || posterUrl.includes('/contents/videos_screenshots/'))) {
+        let prefix = null;
+        if (posterUrl.includes('/180x135/')) {
+          prefix = posterUrl.substring(0, posterUrl.indexOf('/180x135/') + 9);
         } else {
-          state.currentTimelinePrefix = null;
-          state.currentTimelineCount = 0;
-          if (dom.modalTimelinePreviewImg) dom.modalTimelinePreviewImg.style.display = 'none';
+          const baseFolder = posterUrl.substring(0, posterUrl.lastIndexOf('/') + 1);
+          prefix = `${baseFolder}180x135/`;
         }
-      } else {
-        // Archivebate: YouTube-style storyboard (generowany w tle i cache'owany na dysku)
-        state.currentTimelinePrefix = null;
-        state.currentTimelineCount = 0;
-        state.timelineSpriteBoard = null;
-        if (dom.modalTimelinePreviewImg) dom.modalTimelinePreviewImg.style.display = 'none';
+        state.currentTimelinePrefix = prefix;
+        state.currentTimelineCount = 15;
+        if (dom.modalTimelinePreviewImg) {
+          dom.modalTimelinePreviewImg.src = `${state.currentTimelinePrefix}1.jpg`;
+          dom.modalTimelinePreviewImg.style.display = 'block';
+        }
         if (dom.modalTimelinePreviewVideo) {
           dom.modalTimelinePreviewVideo.style.display = 'none';
-          dom.modalTimelinePreviewVideo.pause();
-          dom.modalTimelinePreviewVideo.removeAttribute('src');
         }
-        if (dom.modalTimelineSprite && window.ArchivebateYouTubeStoryboard) {
-          ArchivebateYouTubeStoryboard.clearFrame(dom.modalTimelineSprite);
+        if (dom.modalTimelineSprite && window.ArchivebateYouTubeStoryboard) ArchivebateYouTubeStoryboard.clearFrame(dom.modalTimelineSprite);
+        if (dom.modalTimelinePreviewStatus) dom.modalTimelinePreviewStatus.style.display = 'none';
+        // BŁYSKAWICZNE PRELOADOWANIE WSZYSTKICH 15 KLATEK W PAMIĘCI PRZEGLĄDARKI (0ms opóźnienia)
+        for (let i = 1; i <= 15; i++) {
+          const preImg = new Image();
+          preImg.src = `${state.currentTimelinePrefix}${i}.jpg`;
+          state.preloadedStoryboard.push(preImg);
         }
-        if (dom.modalTimelinePreviewStatus) {
-          dom.modalTimelinePreviewStatus.style.display = 'none';
-        }
+      } else {
+        state.currentTimelinePrefix = null;
+        state.currentTimelineCount = 0;
+        if (dom.modalTimelinePreviewImg) dom.modalTimelinePreviewImg.style.display = 'none';
       }
-
-      if (dom.modalTimelineProgress) dom.modalTimelineProgress.style.width = '0%';
-      if (dom.modalTimelineThumb) dom.modalTimelineThumb.style.left = '0%';
-      if (dom.modalTimelineBuffer) dom.modalTimelineBuffer.style.width = '0%';
-
-      const hideLoadingPoster = () => {
-        if (dom.videoLoader) {
-          dom.videoLoader.style.opacity = '0';
-          setTimeout(() => {
-            if (dom.videoLoader && dom.videoLoader.style.opacity === '0') {
-              dom.videoLoader.style.display = 'none';
-            }
-          }, 200);
-        }
-        if (dom.modalLoadingPoster) {
-          dom.modalLoadingPoster.style.opacity = '0';
-          setTimeout(() => {
-            if (dom.modalLoadingPoster && dom.modalLoadingPoster.style.opacity === '0') {
-              dom.modalLoadingPoster.style.display = 'none';
-            }
-          }, 350);
-        }
-      };
-
-      const prepareYoutubeStoryboard = (dur) => {
-        const isCamwhores = !!state.currentTimelinePrefix;
-        if (isCamwhores || !video?.id || !window.ArchivebateYouTubeStoryboard) return;
-        const duration = Number(dur) > 0 ? Number(dur) : ((Number.isFinite(dom.modalVideo.duration) && dom.modalVideo.duration > 0) ? dom.modalVideo.duration : parseDurationToSeconds(video?.duration || state.currentVideoDetails?.duration));
-        if (!duration || duration <= 0) return;
-        if (state.timelineSpriteBoard || state.timelineSpriteAbort) return;
-
-        const controller = new AbortController();
-        state.timelineSpriteAbort = controller;
-        const expectedId = String(video.id);
-
-        ArchivebateYouTubeStoryboard.prepare({
-          videoId: expectedId,
-          duration: duration,
-          signal: controller.signal,
-          onStatus: (status) => {
-            if (controller.signal.aborted || String(state.currentVideoDetails?.id || '') !== expectedId) return;
-            if (dom.modalTimelinePreviewStatus && status !== 'ready') {
-              dom.modalTimelinePreviewStatus.textContent = 'Przygotowywanie podglądu…';
-              dom.modalTimelinePreviewStatus.style.display = 'flex';
-            }
-          },
-          onUpgrade: (upgradedBoard) => {
-            if (controller.signal.aborted || String(state.currentVideoDetails?.id || '') !== expectedId) return;
-            state.timelineSpriteBoard = upgradedBoard;
-          }
-        }).then(board => {
-          if (controller.signal.aborted || String(state.currentVideoDetails?.id || '') !== expectedId) return;
-          state.timelineSpriteBoard = board;
-          if (dom.modalTimelinePreviewStatus) dom.modalTimelinePreviewStatus.style.display = 'none';
-        }).catch(err => {
-          if (err?.name === 'AbortError') return;
-          if (dom.modalTimelinePreviewStatus) {
-            dom.modalTimelinePreviewStatus.textContent = 'Podgląd niedostępny';
-            dom.modalTimelinePreviewStatus.style.display = 'flex';
-          }
-        }).finally(() => {
-          if (state.timelineSpriteAbort === controller) state.timelineSpriteAbort = null;
-        });
-      };
-
-      const durSec = parseDurationToSeconds(video.duration || details.duration);
-      if (durSec > 0) prepareYoutubeStoryboard(durSec);
-
-      dom.modalVideo.addEventListener('loadedmetadata', () => {
-        hideLoadingPoster();
-        prepareYoutubeStoryboard(dom.modalVideo.duration);
-      }, { once: true });
-      dom.modalVideo.onloadeddata = hideLoadingPoster;
-      dom.modalVideo.oncanplay = () => {
-        hideLoadingPoster();
-        prepareYoutubeStoryboard();
-      };
-      dom.modalVideo.onplaying = hideLoadingPoster;
-      dom.modalVideo.onerror = () => {
-        hideLoadingPoster();
-        showToast('Błąd ładowania strumienia. Spróbuj odświeżyć.', 'error');
-      };
-      dom.modalVideo.play().catch(() => {});
     } else {
-      if (dom.modalLoadingPoster) dom.modalLoadingPoster.style.display = 'none';
-      dom.videoLoader.style.display = 'none';
-      showToast('Nie znaleziono bezpośredniego strumienia wideo', 'error');
+      // Archivebate: YouTube-style storyboard (generowany w tle i cache'owany na dysku)
+      state.currentTimelinePrefix = null;
+      state.currentTimelineCount = 0;
+      state.timelineSpriteBoard = null;
+      if (dom.modalTimelinePreviewImg) dom.modalTimelinePreviewImg.style.display = 'none';
+      if (dom.modalTimelinePreviewVideo) {
+        dom.modalTimelinePreviewVideo.style.display = 'none';
+        dom.modalTimelinePreviewVideo.pause();
+        dom.modalTimelinePreviewVideo.removeAttribute('src');
+      }
+      if (dom.modalTimelineSprite && window.ArchivebateYouTubeStoryboard) {
+        ArchivebateYouTubeStoryboard.clearFrame(dom.modalTimelineSprite);
+      }
+      if (dom.modalTimelinePreviewStatus) {
+        dom.modalTimelinePreviewStatus.style.display = 'none';
+      }
     }
 
     if (details.direct_url || details.download_url) {
@@ -2526,8 +2610,10 @@ async function openVideoModal(video) {
       dom.modalKeywords.innerHTML = '';
     }
   } catch (e) {
-    dom.videoLoader.style.display = 'none';
-    showToast('Błąd pobierania wideo', 'error');
+    if (!dom.modalVideo.src) {
+      dom.videoLoader.style.display = 'none';
+      showToast('Błąd pobierania wideo', 'error');
+    }
   }
 }
 
