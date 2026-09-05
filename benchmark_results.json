@@ -1,75 +1,95 @@
 {
   "Archivebate Cold (/watch)": {
     "ttff": {
-      "median": 1205,
-      "min": 1205,
-      "max": 1205,
-      "stddev": 0.0,
-      "count": 3
+      "median": 2349,
+      "min": 2313,
+      "max": 3588,
+      "stddev": 561.2,
+      "count": 5
     },
     "ttfb": {
-      "median": 1204,
-      "min": 1203,
-      "max": 2409,
-      "stddev": 696.0,
-      "count": 3
+      "median": 1143,
+      "min": 1108,
+      "max": 2256,
+      "stddev": 499.4,
+      "count": 5
     },
     "metadata": {
-      "median": 2416,
-      "min": 2339,
-      "max": 3624,
-      "stddev": 720.7,
-      "count": 3
+      "median": 2301,
+      "min": 2276,
+      "max": 3452,
+      "stddev": 517.2,
+      "count": 5
     },
     "loadeddata": {
-      "median": 2472,
-      "min": 2369,
-      "max": 3731,
-      "stddev": 758.4,
-      "count": 3
+      "median": 2357,
+      "min": 2311,
+      "max": 3593,
+      "stddev": 563.3,
+      "count": 5
     },
     "playing": {
-      "median": 2473,
-      "min": 2370,
-      "max": 3731,
-      "stddev": 757.8,
-      "count": 3
+      "median": 2358,
+      "min": 2312,
+      "max": 3593,
+      "stddev": 562.8,
+      "count": 5
     },
     "stream_src": {
       "median": 2,
       "min": 2,
-      "max": 4,
-      "stddev": 1.2,
-      "count": 3
+      "max": 2,
+      "stddev": 0.0,
+      "count": 5
     },
+    "valid_runs": 5,
+    "total_runs": 5,
+    "timeouts": 0,
+    "sources": [
+      "requestVideoFrameCallback"
+    ],
+    "all_sanity_ok": true,
     "runs": [
       {
         "metrics": {
           "videoId": "16440393",
           "mode": "/watch",
           "cache": "cold",
-          "stream_src": 4,
-          "details_ready": 1629,
-          "metadata": 3624,
-          "loadeddata": 3731,
-          "first_frame": 1205,
-          "playing": 3731,
+          "stream_src": 2,
+          "details_ready": 1466,
+          "metadata": 3452,
+          "loadeddata": 3593,
+          "first_frame": 3588,
+          "first_presented_frame": 3588,
+          "first_frame_source": "requestVideoFrameCallback",
+          "frame_detection_timeout": false,
+          "frame_metadata": {
+            "mediaTime": 0,
+            "presentationTime": 3713.6,
+            "presentedFrames": 1
+          },
+          "is_valid_measurement": true,
+          "playing": 3593,
           "storyboard_start": null,
           "storyboard_quick_ready": null,
           "reported": true
         },
         "timing": {
-          "startTime": 178,
-          "requestStart": 179,
-          "responseStart": 2588,
-          "ttfb": 2409
+          "startTime": 137,
+          "requestStart": 137,
+          "responseStart": 2393,
+          "ttfb": 2256
         },
-        "ttff": 1205,
-        "ttfb": 2409,
-        "stream_src": 4,
-        "metadata": 3624,
-        "loadeddata": 3731,
-        "playing": 3731
+        "ttff": 3588,
+        "is_valid": true,
+        "source": "requestVideoFrameCallback",
+        "timed_out": false,
+        "sanity_ok": true,
+        "ttfb": 2256,
+        "stream_src": 2,
+        "metadata": 3452,
+        "loadeddata": 3593,
+        "playing": 3593
       },
       {
         "metrics": {
@@ -77,27 +97,81 @@
           "mode": "/watch",
           "cache": "cold",
           "stream_src": 2,
-          "details_ready": 402,
-          "metadata": 2416,
-          "loadeddata": 2472,
-          "first_frame": 1205,
-          "playing": 2473,
+          "details_ready": 355,
+          "metadata": 2276,
+          "loadeddata": 2311,
+          "first_frame": 2313,
+          "first_presented_frame": 2313,
+          "first_frame_source": "requestVideoFrameCallback",
+          "frame_detection_timeout": false,
+          "frame_metadata": {
+            "mediaTime": 0,
+            "presentationTime": 2351.1,
+            "presentedFrames": 1
+          },
+          "is_valid_measurement": true,
+          "playing": 2312,
           "storyboard_start": null,
           "storyboard_quick_ready": null,
           "reported": true
         },
         "timing": {
-          "startTime": 51,
+          "startTime": 54,
+          "requestStart": 54,
+          "responseStart": 1162,
+          "ttfb": 1108
+        },
+        "ttff": 2313,
+        "is_valid": true,
+        "source": "requestVideoFrameCallback",
+        "timed_out": false,
+        "sanity_ok": true,
+        "ttfb": 1108,
+        "stream_src": 2,
+        "metadata": 2276,
+        "loadeddata": 2311,
+        "playing": 2312
+      },
+      {
+        "metrics": {
+          "videoId": "16440393",
+          "mode": "/watch",
+          "cache": "cold",
+          "stream_src": 2,
+          "details_ready": 408,
+          "metadata": 2326,
+          "loadeddata": 2358,
+          "first_frame": 2356,
+          "first_presented_frame": 2356,
+          "first_frame_source": "requestVideoFrameCallback",
+          "frame_detection_timeout": false,
+          "frame_metadata": {
+            "mediaTime": 0,
+            "presentationTime": 2394.6,
+            "presentedFrames": 1
+          },
+          "is_valid_measurement": true,
+          "playing": 2359,
+          "storyboard_start": null,
+          "storyboard_quick_ready": null,
+          "reported": true
+        },
+        "timing": {
+          "startTime": 52,
           "requestStart": 52,
-          "responseStart": 1255,
-          "ttfb": 1204
+          "responseStart": 1242,
+          "ttfb": 1191
         },
-        "ttff": 1205,
-        "ttfb": 1204,
+        "ttff": 2356,
+        "is_valid": true,
+        "source": "requestVideoFrameCallback",
+        "timed_out": false,
+        "sanity_ok": true,
+        "ttfb": 1191,
         "stream_src": 2,
-        "metadata": 2416,
-        "loadeddata": 2472,
-        "playing": 2473
+        "metadata": 2326,
+        "loadeddata": 2358,
+        "playing": 2359
       },
       {
         "metrics": {
@@ -105,73 +179,134 @@
           "mode": "/watch",
           "cache": "cold",
           "stream_src": 2,
-          "details_ready": 428,
-          "metadata": 2339,
-          "loadeddata": 2369,
-          "first_frame": 1205,
-          "playing": 2370,
+          "details_ready": 364,
+          "metadata": 2301,
+          "loadeddata": 2357,
+          "first_frame": 2349,
+          "first_presented_frame": 2349,
+          "first_frame_source": "requestVideoFrameCallback",
+          "frame_detection_timeout": false,
+          "frame_metadata": {
+            "mediaTime": 0,
+            "presentationTime": 2391.5,
+            "presentedFrames": 1
+          },
+          "is_valid_measurement": true,
+          "playing": 2358,
           "storyboard_start": null,
           "storyboard_quick_ready": null,
           "reported": true
         },
         "timing": {
-          "startTime": 72,
-          "requestStart": 73,
-          "responseStart": 1275,
-          "ttfb": 1203
+          "startTime": 52,
+          "requestStart": 53,
+          "responseStart": 1176,
+          "ttfb": 1124
         },
-        "ttff": 1205,
-        "ttfb": 1203,
+        "ttff": 2349,
+        "is_valid": true,
+        "source": "requestVideoFrameCallback",
+        "timed_out": false,
+        "sanity_ok": true,
+        "ttfb": 1124,
         "stream_src": 2,
-        "metadata": 2339,
-        "loadeddata": 2369,
-        "playing": 2370
+        "metadata": 2301,
+        "loadeddata": 2357,
+        "playing": 2358
+      },
+      {
+        "metrics": {
+          "videoId": "16440393",
+          "mode": "/watch",
+          "cache": "cold",
+          "stream_src": 2,
+          "details_ready": 387,
+          "metadata": 2282,
+          "loadeddata": 2312,
+          "first_frame": 2317,
+          "first_presented_frame": 2317,
+          "first_frame_source": "requestVideoFrameCallback",
+          "frame_detection_timeout": false,
+          "frame_metadata": {
+            "mediaTime": 0,
+            "presentationTime": 2335.1,
+            "presentedFrames": 1
+          },
+          "is_valid_measurement": true,
+          "playing": 2313,
+          "storyboard_start": null,
+          "storyboard_quick_ready": null,
+          "reported": true
+        },
+        "timing": {
+          "startTime": 70,
+          "requestStart": 70,
+          "responseStart": 1213,
+          "ttfb": 1143
+        },
+        "ttff": 2317,
+        "is_valid": true,
+        "source": "requestVideoFrameCallback",
+        "timed_out": false,
+        "sanity_ok": true,
+        "ttfb": 1143,
+        "stream_src": 2,
+        "metadata": 2282,
+        "loadeddata": 2312,
+        "playing": 2313
       }
     ]
   },
   "Archivebate Warm (/watch)": {
     "ttff": {
-      "median": 1206,
-      "min": 1205,
-      "max": 1207,
-      "stddev": 1.0,
-      "count": 3
+      "median": 1983,
+      "min": 1908,
+      "max": 2339,
+      "stddev": 177.1,
+      "count": 5
     },
     "ttfb": {
-      "median": 787,
-      "min": 781,
-      "max": 796,
-      "stddev": 7.5,
-      "count": 3
+      "median": 770,
+      "min": 744,
+      "max": 784,
+      "stddev": 15.3,
+      "count": 5
     },
     "metadata": {
-      "median": 1906,
-      "min": 1885,
-      "max": 1945,
-      "stddev": 30.4,
-      "count": 3
+      "median": 1938,
+      "min": 1873,
+      "max": 2292,
+      "stddev": 174.0,
+      "count": 5
     },
     "loadeddata": {
-      "median": 1962,
-      "min": 1928,
-      "max": 1982,
-      "stddev": 27.3,
-      "count": 3
+      "median": 1977,
+      "min": 1906,
+      "max": 2345,
+      "stddev": 182.2,
+      "count": 5
     },
     "playing": {
-      "median": 1963,
-      "min": 1929,
-      "max": 1983,
-      "stddev": 27.3,
-      "count": 3
+      "median": 1978,
+      "min": 1906,
+      "max": 2346,
+      "stddev": 182.4,
+      "count": 5
     },
     "stream_src": {
       "median": 2,
       "min": 1,
-      "max": 2,
-      "stddev": 0.6,
-      "count": 3
+      "max": 3,
+      "stddev": 0.7,
+      "count": 5
     },
+    "valid_runs": 5,
+    "total_runs": 5,
+    "timeouts": 0,
+    "sources": [
+      "requestVideoFrameCallback"
+    ],
+    "all_sanity_ok": true,
     "runs": [
       {
         "metrics": {
@@ -179,27 +314,163 @@
           "mode": "/watch",
           "cache": "cold",
           "stream_src": 2,
-          "details_ready": 9,
-          "metadata": 1906,
-          "loadeddata": 1962,
-          "first_frame": 1207,
-          "playing": 1963,
+          "details_ready": 10,
+          "metadata": 2292,
+          "loadeddata": 2345,
+          "first_frame": 2339,
+          "first_presented_frame": 2339,
+          "first_frame_source": "requestVideoFrameCallback",
+          "frame_detection_timeout": false,
+          "frame_metadata": {
+            "mediaTime": 0,
+            "presentationTime": 2380.5,
+            "presentedFrames": 1
+          },
+          "is_valid_measurement": true,
+          "playing": 2346,
           "storyboard_start": null,
           "storyboard_quick_ready": null,
           "reported": true
         },
         "timing": {
-          "startTime": 50,
-          "requestStart": 51,
-          "responseStart": 831,
-          "ttfb": 781
+          "startTime": 52,
+          "requestStart": 52,
+          "responseStart": 835,
+          "ttfb": 784
         },
-        "ttff": 1207,
-        "ttfb": 781,
+        "ttff": 2339,
+        "is_valid": true,
+        "source": "requestVideoFrameCallback",
+        "timed_out": false,
+        "sanity_ok": true,
+        "ttfb": 784,
         "stream_src": 2,
-        "metadata": 1906,
-        "loadeddata": 1962,
-        "playing": 1963
+        "metadata": 2292,
+        "loadeddata": 2345,
+        "playing": 2346
+      },
+      {
+        "metrics": {
+          "videoId": "16440393",
+          "mode": "/watch",
+          "cache": "cold",
+          "stream_src": 2,
+          "details_ready": 8,
+          "metadata": 1938,
+          "loadeddata": 1977,
+          "first_frame": 1983,
+          "first_presented_frame": 1983,
+          "first_frame_source": "requestVideoFrameCallback",
+          "frame_detection_timeout": false,
+          "frame_metadata": {
+            "mediaTime": 0,
+            "presentationTime": 2011.7,
+            "presentedFrames": 1
+          },
+          "is_valid_measurement": true,
+          "playing": 1978,
+          "storyboard_start": null,
+          "storyboard_quick_ready": null,
+          "reported": true
+        },
+        "timing": {
+          "startTime": 49,
+          "requestStart": 50,
+          "responseStart": 811,
+          "ttfb": 762
+        },
+        "ttff": 1983,
+        "is_valid": true,
+        "source": "requestVideoFrameCallback",
+        "timed_out": false,
+        "sanity_ok": true,
+        "ttfb": 762,
+        "stream_src": 2,
+        "metadata": 1938,
+        "loadeddata": 1977,
+        "playing": 1978
+      },
+      {
+        "metrics": {
+          "videoId": "16440393",
+          "mode": "/watch",
+          "cache": "cold",
+          "stream_src": 3,
+          "details_ready": 33,
+          "metadata": 2009,
+          "loadeddata": 2040,
+          "first_frame": 2038,
+          "first_presented_frame": 2038,
+          "first_frame_source": "requestVideoFrameCallback",
+          "frame_detection_timeout": false,
+          "frame_metadata": {
+            "mediaTime": 0,
+            "presentationTime": 2056.7,
+            "presentedFrames": 1
+          },
+          "is_valid_measurement": true,
+          "playing": 2041,
+          "storyboard_start": null,
+          "storyboard_quick_ready": null,
+          "reported": true
+        },
+        "timing": {
+          "startTime": 32,
+          "requestStart": 32,
+          "responseStart": 808,
+          "ttfb": 776
+        },
+        "ttff": 2038,
+        "is_valid": true,
+        "source": "requestVideoFrameCallback",
+        "timed_out": false,
+        "sanity_ok": true,
+        "ttfb": 776,
+        "stream_src": 3,
+        "metadata": 2009,
+        "loadeddata": 2040,
+        "playing": 2041
+      },
+      {
+        "metrics": {
+          "videoId": "16440393",
+          "mode": "/watch",
+          "cache": "cold",
+          "stream_src": 2,
+          "details_ready": 28,
+          "metadata": 1873,
+          "loadeddata": 1906,
+          "first_frame": 1908,
+          "first_presented_frame": 1908,
+          "first_frame_source": "requestVideoFrameCallback",
+          "frame_detection_timeout": false,
+          "frame_metadata": {
+            "mediaTime": 0,
+            "presentationTime": 1919.3,
+            "presentedFrames": 1
+          },
+          "is_valid_measurement": true,
+          "playing": 1906,
+          "storyboard_start": null,
+          "storyboard_quick_ready": null,
+          "reported": true
+        },
+        "timing": {
+          "startTime": 33,
+          "requestStart": 33,
+          "responseStart": 777,
+          "ttfb": 744
+        },
+        "ttff": 1908,
+        "is_valid": true,
+        "source": "requestVideoFrameCallback",
+        "timed_out": false,
+        "sanity_ok": true,
+        "ttfb": 744,
+        "stream_src": 2,
+        "metadata": 1873,
+        "loadeddata": 1906,
+        "playing": 1906
       },
       {
         "metrics": {
@@ -207,124 +478,216 @@
           "mode": "/watch",
           "cache": "cold",
           "stream_src": 1,
-          "details_ready": 30,
-          "metadata": 1945,
-          "loadeddata": 1982,
-          "first_frame": 1205,
-          "playing": 1983,
+          "details_ready": 29,
+          "metadata": 1874,
+          "loadeddata": 1906,
+          "first_frame": 1916,
+          "first_presented_frame": 1916,
+          "first_frame_source": "requestVideoFrameCallback",
+          "frame_detection_timeout": false,
+          "frame_metadata": {
+            "mediaTime": 0,
+            "presentationTime": 1922.3,
+            "presentedFrames": 1
+          },
+          "is_valid_measurement": true,
+          "playing": 1907,
           "storyboard_start": null,
           "storyboard_quick_ready": null,
           "reported": true
         },
         "timing": {
-          "startTime": 28,
-          "requestStart": 29,
-          "responseStart": 815,
-          "ttfb": 787
+          "startTime": 50,
+          "requestStart": 50,
+          "responseStart": 820,
+          "ttfb": 770
         },
-        "ttff": 1205,
-        "ttfb": 787,
+        "ttff": 1916,
+        "is_valid": true,
+        "source": "requestVideoFrameCallback",
+        "timed_out": false,
+        "sanity_ok": true,
+        "ttfb": 770,
         "stream_src": 1,
-        "metadata": 1945,
-        "loadeddata": 1982,
-        "playing": 1983
-      },
-      {
-        "metrics": {
-          "videoId": "16440393",
-          "mode": "/watch",
-          "cache": "cold",
-          "stream_src": 2,
-          "details_ready": 30,
-          "metadata": 1885,
-          "loadeddata": 1928,
-          "first_frame": 1206,
-          "playing": 1929,
-          "storyboard_start": null,
-          "storyboard_quick_ready": null,
-          "reported": true
-        },
-        "timing": {
-          "startTime": 30,
-          "requestStart": 30,
-          "responseStart": 826,
-          "ttfb": 796
-        },
-        "ttff": 1206,
-        "ttfb": 796,
-        "stream_src": 2,
-        "metadata": 1885,
-        "loadeddata": 1928,
-        "playing": 1929
+        "metadata": 1874,
+        "loadeddata": 1906,
+        "playing": 1907
       }
     ]
   },
   "Archivebate Cold (Modal)": {
     "ttff": {
-      "median": 1204,
-      "min": 1202,
-      "max": 1213,
-      "stddev": 5.9,
-      "count": 3
+      "median": 2315,
+      "min": 2250,
+      "max": 2672,
+      "stddev": 171.4,
+      "count": 5
     },
     "ttfb": {
-      "median": 0,
-      "min": 0,
-      "max": 0,
-      "stddev": 0,
-      "count": 0
+      "median": 1111,
+      "min": 1083,
+      "max": 1483,
+      "stddev": 168.3,
+      "count": 5
     },
     "metadata": {
-      "median": 0,
-      "min": 0,
-      "max": 0,
-      "stddev": 0,
-      "count": 0
+      "median": 2271,
+      "min": 2186,
+      "max": 2599,
+      "stddev": 169.0,
+      "count": 5
     },
     "loadeddata": {
-      "median": 0,
-      "min": 0,
-      "max": 0,
-      "stddev": 0,
-      "count": 0
+      "median": 2301,
+      "min": 2223,
+      "max": 2629,
+      "stddev": 168.1,
+      "count": 5
     },
     "playing": {
-      "median": 0,
-      "min": 0,
-      "max": 0,
-      "stddev": 0,
-      "count": 0
+      "median": 2301,
+      "min": 2223,
+      "max": 2629,
+      "stddev": 168.1,
+      "count": 5
     },
     "stream_src": {
-      "median": 0,
-      "min": 0,
-      "max": 0,
-      "stddev": 0,
-      "count": 0
+      "median": 1.0,
+      "min": 1,
+      "max": 1,
+      "stddev": 0.0,
+      "count": 4
     },
+    "valid_runs": 5,
+    "total_runs": 5,
+    "timeouts": 0,
+    "sources": [
+      "requestVideoFrameCallback"
+    ],
+    "all_sanity_ok": true,
     "runs": [
       {
         "metrics": {
           "videoId": "16440393",
           "mode": "modal",
           "cache": "prefetch",
-          "stream_src": 0,
-          "details_ready": 413,
-          "metadata": null,
-          "loadeddata": null,
-          "first_frame": 1204,
-          "playing": null,
+          "stream_src": 1,
+          "details_ready": 387,
+          "metadata": 2345,
+          "loadeddata": 2378,
+          "first_frame": 2398,
+          "first_presented_frame": 2398,
+          "first_frame_source": "requestVideoFrameCallback",
+          "frame_detection_timeout": false,
+          "frame_metadata": {
+            "mediaTime": 0,
+            "presentationTime": 3113.4,
+            "presentedFrames": 1
+          },
+          "is_valid_measurement": true,
+          "playing": 2379,
           "storyboard_start": null,
           "storyboard_quick_ready": null,
           "reported": true
         },
-        "timing": null,
-        "ttff": 1204,
-        "ttfb": null,
-        "stream_src": 0,
-        "metadata": 0,
-        "loadeddata": 0,
-        "playing": 0
+        "timing": {
+          "startTime": 786,
+          "requestStart": 1120,
+          "responseStart": 2007,
+          "ttfb": 1221
+        },
+        "ttff": 2398,
+        "is_valid": true,
+        "source": "requestVideoFrameCallback",
+        "timed_out": false,
+        "sanity_ok": true,
+        "ttfb": 1221,
+        "stream_src": 1,
+        "metadata": 2345,
+        "loadeddata": 2378,
+        "playing": 2379
+      },
+      {
+        "metrics": {
+          "videoId": "16440393",
+          "mode": "modal",
+          "cache": "prefetch",
+          "stream_src": 1,
+          "details_ready": 382,
+          "metadata": 2186,
+          "loadeddata": 2223,
+          "first_frame": 2276,
+          "first_presented_frame": 2276,
+          "first_frame_source": "requestVideoFrameCallback",
+          "frame_detection_timeout": false,
+          "frame_metadata": {
+            "mediaTime": 0,
+            "presentationTime": 2799.7,
+            "presentedFrames": 1
+          },
+          "is_valid_measurement": true,
+          "playing": 2223,
+          "storyboard_start": null,
+          "storyboard_quick_ready": null,
+          "reported": true
+        },
+        "timing": {
+          "startTime": 606,
+          "requestStart": 606,
+          "responseStart": 1689,
+          "ttfb": 1083
+        },
+        "ttff": 2276,
+        "is_valid": true,
+        "source": "requestVideoFrameCallback",
+        "timed_out": false,
+        "sanity_ok": true,
+        "ttfb": 1083,
+        "stream_src": 1,
+        "metadata": 2186,
+        "loadeddata": 2223,
+        "playing": 2223
+      },
+      {
+        "metrics": {
+          "videoId": "16440393",
+          "mode": "modal",
+          "cache": "prefetch",
+          "stream_src": 1,
+          "details_ready": 726,
+          "metadata": 2599,
+          "loadeddata": 2629,
+          "first_frame": 2672,
+          "first_presented_frame": 2672,
+          "first_frame_source": "requestVideoFrameCallback",
+          "frame_detection_timeout": false,
+          "frame_metadata": {
+            "mediaTime": 0,
+            "presentationTime": 3341.5,
+            "presentedFrames": 1
+          },
+          "is_valid_measurement": true,
+          "playing": 2629,
+          "storyboard_start": null,
+          "storyboard_quick_ready": null,
+          "reported": true
+        },
+        "timing": {
+          "startTime": 743,
+          "requestStart": 744,
+          "responseStart": 2226,
+          "ttfb": 1483
+        },
+        "ttff": 2672,
+        "is_valid": true,
+        "source": "requestVideoFrameCallback",
+        "timed_out": false,
+        "sanity_ok": true,
+        "ttfb": 1483,
+        "stream_src": 1,
+        "metadata": 2599,
+        "loadeddata": 2629,
+        "playing": 2629
       },
       {
         "metrics": {
@@ -332,244 +695,515 @@
           "mode": "modal",
           "cache": "prefetch",
           "stream_src": 0,
-          "details_ready": 433,
-          "metadata": null,
-          "loadeddata": null,
-          "first_frame": 1202,
-          "playing": null,
+          "details_ready": 362,
+          "metadata": 2196,
+          "loadeddata": 2224,
+          "first_frame": 2250,
+          "first_presented_frame": 2250,
+          "first_frame_source": "requestVideoFrameCallback",
+          "frame_detection_timeout": false,
+          "frame_metadata": {
+            "mediaTime": 0,
+            "presentationTime": 2938.1,
+            "presentedFrames": 1
+          },
+          "is_valid_measurement": true,
+          "playing": 2224,
           "storyboard_start": null,
           "storyboard_quick_ready": null,
           "reported": true
         },
-        "timing": null,
-        "ttff": 1202,
-        "ttfb": null,
+        "timing": {
+          "startTime": 742,
+          "requestStart": 743,
+          "responseStart": 1836,
+          "ttfb": 1094
+        },
+        "ttff": 2250,
+        "is_valid": true,
+        "source": "requestVideoFrameCallback",
+        "timed_out": false,
+        "sanity_ok": true,
+        "ttfb": 1094,
         "stream_src": 0,
-        "metadata": 0,
-        "loadeddata": 0,
-        "playing": 0
+        "metadata": 2196,
+        "loadeddata": 2224,
+        "playing": 2224
       },
       {
         "metrics": {
           "videoId": "16440393",
           "mode": "modal",
           "cache": "prefetch",
-          "stream_src": 0,
-          "details_ready": 392,
-          "metadata": null,
-          "loadeddata": null,
-          "first_frame": 1213,
-          "playing": null,
+          "stream_src": 1,
+          "details_ready": 370,
+          "metadata": 2271,
+          "loadeddata": 2301,
+          "first_frame": 2315,
+          "first_presented_frame": 2315,
+          "first_frame_source": "requestVideoFrameCallback",
+          "frame_detection_timeout": false,
+          "frame_metadata": {
+            "mediaTime": 0,
+            "presentationTime": 2998,
+            "presentedFrames": 1
+          },
+          "is_valid_measurement": true,
+          "playing": 2301,
           "storyboard_start": null,
           "storyboard_quick_ready": null,
           "reported": true
         },
-        "timing": null,
-        "ttff": 1213,
-        "ttfb": null,
-        "stream_src": 0,
-        "metadata": 0,
-        "loadeddata": 0,
-        "playing": 0
+        "timing": {
+          "startTime": 728,
+          "requestStart": 729,
+          "responseStart": 1839,
+          "ttfb": 1111
+        },
+        "ttff": 2315,
+        "is_valid": true,
+        "source": "requestVideoFrameCallback",
+        "timed_out": false,
+        "sanity_ok": true,
+        "ttfb": 1111,
+        "stream_src": 1,
+        "metadata": 2271,
+        "loadeddata": 2301,
+        "playing": 2301
       }
     ]
   },
   "Archivebate Hover-Prefetch (Modal)": {
     "ttff": {
-      "median": 1202,
-      "min": 1201,
-      "max": 1203,
-      "stddev": 1.0,
-      "count": 3
+      "median": 2028,
+      "min": 1882,
+      "max": 2561,
+      "stddev": 272.7,
+      "count": 5
     },
     "ttfb": {
-      "median": 807.0,
-      "min": 793,
-      "max": 821,
-      "stddev": 19.8,
-      "count": 2
+      "median": 797,
+      "min": 734,
+      "max": 891,
+      "stddev": 64.2,
+      "count": 5
     },
     "metadata": {
-      "median": 0,
-      "min": 0,
-      "max": 0,
-      "stddev": 0,
-      "count": 0
+      "median": 1929,
+      "min": 1846,
+      "max": 2519,
+      "stddev": 281.2,
+      "count": 5
     },
     "loadeddata": {
-      "median": 0,
-      "min": 0,
-      "max": 0,
-      "stddev": 0,
-      "count": 0
+      "median": 1962,
+      "min": 1875,
+      "max": 2550,
+      "stddev": 280.4,
+      "count": 5
     },
     "playing": {
-      "median": 0,
-      "min": 0,
-      "max": 0,
-      "stddev": 0,
-      "count": 0
+      "median": 1962,
+      "min": 1875,
+      "max": 2550,
+      "stddev": 280.4,
+      "count": 5
     },
     "stream_src": {
-      "median": 0,
-      "min": 0,
-      "max": 0,
-      "stddev": 0,
-      "count": 0
+      "median": 1,
+      "min": 1,
+      "max": 1,
+      "stddev": 0.0,
+      "count": 5
     },
+    "valid_runs": 5,
+    "total_runs": 5,
+    "timeouts": 0,
+    "sources": [
+      "requestVideoFrameCallback"
+    ],
+    "all_sanity_ok": true,
     "runs": [
       {
         "metrics": {
           "videoId": "16440393",
           "mode": "modal",
           "cache": "warm",
-          "stream_src": 0,
+          "stream_src": 1,
           "details_ready": 1,
-          "metadata": null,
-          "loadeddata": null,
-          "first_frame": 1201,
-          "playing": null,
+          "metadata": 1846,
+          "loadeddata": 1875,
+          "first_frame": 1882,
+          "first_presented_frame": 1882,
+          "first_frame_source": "requestVideoFrameCallback",
+          "frame_detection_timeout": false,
+          "frame_metadata": {
+            "mediaTime": 0,
+            "presentationTime": 2969.5,
+            "presentedFrames": 1
+          },
+          "is_valid_measurement": true,
+          "playing": 1875,
           "storyboard_start": null,
           "storyboard_quick_ready": null,
           "reported": true
         },
         "timing": {
-          "startTime": 1179,
-          "requestStart": 1180,
-          "responseStart": 2000,
-          "ttfb": 821
+          "startTime": 1126,
+          "requestStart": 1127,
+          "responseStart": 1860,
+          "ttfb": 734
         },
-        "ttff": 1201,
-        "ttfb": 821,
-        "stream_src": 0,
-        "metadata": 0,
-        "loadeddata": 0,
-        "playing": 0
+        "ttff": 1882,
+        "is_valid": true,
+        "source": "requestVideoFrameCallback",
+        "timed_out": false,
+        "sanity_ok": true,
+        "ttfb": 734,
+        "stream_src": 1,
+        "metadata": 1846,
+        "loadeddata": 1875,
+        "playing": 1875
       },
       {
         "metrics": {
           "videoId": "16440393",
           "mode": "modal",
           "cache": "warm",
-          "stream_src": 0,
+          "stream_src": 1,
           "details_ready": 1,
-          "metadata": null,
-          "loadeddata": null,
-          "first_frame": 1202,
-          "playing": null,
+          "metadata": 2519,
+          "loadeddata": 2550,
+          "first_frame": 2561,
+          "first_presented_frame": 2561,
+          "first_frame_source": "requestVideoFrameCallback",
+          "frame_detection_timeout": false,
+          "frame_metadata": {
+            "mediaTime": 0,
+            "presentationTime": 3497.9,
+            "presentedFrames": 1
+          },
+          "is_valid_measurement": true,
+          "playing": 2550,
           "storyboard_start": null,
           "storyboard_quick_ready": null,
           "reported": true
         },
-        "timing": null,
-        "ttff": 1202,
-        "ttfb": null,
-        "stream_src": 0,
-        "metadata": 0,
-        "loadeddata": 0,
-        "playing": 0
+        "timing": {
+          "startTime": 977,
+          "requestStart": 978,
+          "responseStart": 1833,
+          "ttfb": 856
+        },
+        "ttff": 2561,
+        "is_valid": true,
+        "source": "requestVideoFrameCallback",
+        "timed_out": false,
+        "sanity_ok": true,
+        "ttfb": 856,
+        "stream_src": 1,
+        "metadata": 2519,
+        "loadeddata": 2550,
+        "playing": 2550
       },
       {
         "metrics": {
           "videoId": "16440393",
           "mode": "modal",
           "cache": "warm",
-          "stream_src": 0,
+          "stream_src": 1,
           "details_ready": 1,
-          "metadata": null,
-          "loadeddata": null,
-          "first_frame": 1203,
-          "playing": null,
+          "metadata": 2177,
+          "loadeddata": 2207,
+          "first_frame": 2246,
+          "first_presented_frame": 2246,
+          "first_frame_source": "requestVideoFrameCallback",
+          "frame_detection_timeout": false,
+          "frame_metadata": {
+            "mediaTime": 0,
+            "presentationTime": 3447.5,
+            "presentedFrames": 1
+          },
+          "is_valid_measurement": true,
+          "playing": 2207,
           "storyboard_start": null,
           "storyboard_quick_ready": null,
           "reported": true
         },
         "timing": {
-          "startTime": 1014,
-          "requestStart": 1015,
-          "responseStart": 1807,
-          "ttfb": 793
+          "startTime": 1273,
+          "requestStart": 1273,
+          "responseStart": 2163,
+          "ttfb": 891
         },
-        "ttff": 1203,
-        "ttfb": 793,
-        "stream_src": 0,
-        "metadata": 0,
-        "loadeddata": 0,
-        "playing": 0
+        "ttff": 2246,
+        "is_valid": true,
+        "source": "requestVideoFrameCallback",
+        "timed_out": false,
+        "sanity_ok": true,
+        "ttfb": 891,
+        "stream_src": 1,
+        "metadata": 2177,
+        "loadeddata": 2207,
+        "playing": 2207
+      },
+      {
+        "metrics": {
+          "videoId": "16440393",
+          "mode": "modal",
+          "cache": "warm",
+          "stream_src": 1,
+          "details_ready": 1,
+          "metadata": 1888,
+          "loadeddata": 1924,
+          "first_frame": 1967,
+          "first_presented_frame": 1967,
+          "first_frame_source": "requestVideoFrameCallback",
+          "frame_detection_timeout": false,
+          "frame_metadata": {
+            "mediaTime": 0,
+            "presentationTime": 3079.1,
+            "presentedFrames": 1
+          },
+          "is_valid_measurement": true,
+          "playing": 1924,
+          "storyboard_start": null,
+          "storyboard_quick_ready": null,
+          "reported": true
+        },
+        "timing": {
+          "startTime": 1184,
+          "requestStart": 1185,
+          "responseStart": 1951,
+          "ttfb": 767
+        },
+        "ttff": 1967,
+        "is_valid": true,
+        "source": "requestVideoFrameCallback",
+        "timed_out": false,
+        "sanity_ok": true,
+        "ttfb": 767,
+        "stream_src": 1,
+        "metadata": 1888,
+        "loadeddata": 1924,
+        "playing": 1924
+      },
+      {
+        "metrics": {
+          "videoId": "16440393",
+          "mode": "modal",
+          "cache": "warm",
+          "stream_src": 1,
+          "details_ready": 1,
+          "metadata": 1929,
+          "loadeddata": 1962,
+          "first_frame": 2028,
+          "first_presented_frame": 2028,
+          "first_frame_source": "requestVideoFrameCallback",
+          "frame_detection_timeout": false,
+          "frame_metadata": {
+            "mediaTime": 0,
+            "presentationTime": 3000.1,
+            "presentedFrames": 1
+          },
+          "is_valid_measurement": true,
+          "playing": 1962,
+          "storyboard_start": null,
+          "storyboard_quick_ready": null,
+          "reported": true
+        },
+        "timing": {
+          "startTime": 1076,
+          "requestStart": 1077,
+          "responseStart": 1873,
+          "ttfb": 797
+        },
+        "ttff": 2028,
+        "is_valid": true,
+        "source": "requestVideoFrameCallback",
+        "timed_out": false,
+        "sanity_ok": true,
+        "ttfb": 797,
+        "stream_src": 1,
+        "metadata": 1929,
+        "loadeddata": 1962,
+        "playing": 1962
       }
     ]
   },
   "Archivebate Warm (Modal)": {
     "ttff": {
-      "median": 1207,
-      "min": 1203,
-      "max": 1210,
-      "stddev": 3.5,
-      "count": 3
+      "median": 2007,
+      "min": 1961,
+      "max": 2086,
+      "stddev": 51.1,
+      "count": 5
     },
     "ttfb": {
-      "median": 795,
-      "min": 783,
-      "max": 822,
-      "stddev": 20.0,
-      "count": 3
+      "median": 780,
+      "min": 767,
+      "max": 839,
+      "stddev": 28.2,
+      "count": 5
     },
     "metadata": {
-      "median": 0,
-      "min": 0,
-      "max": 0,
-      "stddev": 0,
-      "count": 0
+      "median": 1941,
+      "min": 1910,
+      "max": 2023,
+      "stddev": 43.7,
+      "count": 5
     },
     "loadeddata": {
-      "median": 0,
-      "min": 0,
-      "max": 0,
-      "stddev": 0,
-      "count": 0
+      "median": 1977,
+      "min": 1945,
+      "max": 2057,
+      "stddev": 43.7,
+      "count": 5
     },
     "playing": {
-      "median": 0,
-      "min": 0,
-      "max": 0,
-      "stddev": 0,
-      "count": 0
+      "median": 1978,
+      "min": 1945,
+      "max": 2057,
+      "stddev": 43.4,
+      "count": 5
     },
     "stream_src": {
-      "median": 1.5,
+      "median": 1,
       "min": 1,
-      "max": 2,
-      "stddev": 0.7,
-      "count": 2
+      "max": 1,
+      "stddev": 0.0,
+      "count": 5
     },
+    "valid_runs": 5,
+    "total_runs": 5,
+    "timeouts": 0,
+    "sources": [
+      "requestVideoFrameCallback"
+    ],
+    "all_sanity_ok": true,
     "runs": [
       {
         "metrics": {
           "videoId": "16440393",
           "mode": "modal",
           "cache": "prefetch",
-          "stream_src": 2,
-          "details_ready": 50,
-          "metadata": null,
-          "loadeddata": null,
-          "first_frame": 1210,
-          "playing": null,
+          "stream_src": 1,
+          "details_ready": 34,
+          "metadata": 1926,
+          "loadeddata": 1958,
+          "first_frame": 1976,
+          "first_presented_frame": 1976,
+          "first_frame_source": "requestVideoFrameCallback",
+          "frame_detection_timeout": false,
+          "frame_metadata": {
+            "mediaTime": 0,
+            "presentationTime": 2674.3,
+            "presentedFrames": 1
+          },
+          "is_valid_measurement": true,
+          "playing": 1959,
           "storyboard_start": null,
           "storyboard_quick_ready": null,
           "reported": true
         },
         "timing": {
-          "startTime": 767,
-          "requestStart": 768,
-          "responseStart": 1550,
-          "ttfb": 783
+          "startTime": 750,
+          "requestStart": 750,
+          "responseStart": 1528,
+          "ttfb": 778
         },
-        "ttff": 1210,
-        "ttfb": 783,
-        "stream_src": 2,
-        "metadata": 0,
-        "loadeddata": 0,
-        "playing": 0
+        "ttff": 1976,
+        "is_valid": true,
+        "source": "requestVideoFrameCallback",
+        "timed_out": false,
+        "sanity_ok": true,
+        "ttfb": 778,
+        "stream_src": 1,
+        "metadata": 1926,
+        "loadeddata": 1958,
+        "playing": 1959
+      },
+      {
+        "metrics": {
+          "videoId": "16440393",
+          "mode": "modal",
+          "cache": "prefetch",
+          "stream_src": 1,
+          "details_ready": 42,
+          "metadata": 1958,
+          "loadeddata": 1992,
+          "first_frame": 2007,
+          "first_presented_frame": 2007,
+          "first_frame_source": "requestVideoFrameCallback",
+          "frame_detection_timeout": false,
+          "frame_metadata": {
+            "mediaTime": 0,
+            "presentationTime": 2633.7,
+            "presentedFrames": 1
+          },
+          "is_valid_measurement": true,
+          "playing": 1992,
+          "storyboard_start": null,
+          "storyboard_quick_ready": null,
+          "reported": true
+        },
+        "timing": {
+          "startTime": 673,
+          "requestStart": 685,
+          "responseStart": 1465,
+          "ttfb": 792
+        },
+        "ttff": 2007,
+        "is_valid": true,
+        "source": "requestVideoFrameCallback",
+        "timed_out": false,
+        "sanity_ok": true,
+        "ttfb": 792,
+        "stream_src": 1,
+        "metadata": 1958,
+        "loadeddata": 1992,
+        "playing": 1992
+      },
+      {
+        "metrics": {
+          "videoId": "16440393",
+          "mode": "modal",
+          "cache": "prefetch",
+          "stream_src": 1,
+          "details_ready": 44,
+          "metadata": 1910,
+          "loadeddata": 1945,
+          "first_frame": 1961,
+          "first_presented_frame": 1961,
+          "first_frame_source": "requestVideoFrameCallback",
+          "frame_detection_timeout": false,
+          "frame_metadata": {
+            "mediaTime": 0,
+            "presentationTime": 2634,
+            "presentedFrames": 1
+          },
+          "is_valid_measurement": true,
+          "playing": 1945,
+          "storyboard_start": null,
+          "storyboard_quick_ready": null,
+          "reported": true
+        },
+        "timing": {
+          "startTime": 726,
+          "requestStart": 727,
+          "responseStart": 1493,
+          "ttfb": 767
+        },
+        "ttff": 1961,
+        "is_valid": true,
+        "source": "requestVideoFrameCallback",
+        "timed_out": false,
+        "sanity_ok": true,
+        "ttfb": 767,
+        "stream_src": 1,
+        "metadata": 1910,
+        "loadeddata": 1945,
+        "playing": 1945
       },
       {
         "metrics": {
@@ -578,358 +1212,39 @@
           "cache": "prefetch",
           "stream_src": 1,
           "details_ready": 51,
-          "metadata": null,
-          "loadeddata": null,
-          "first_frame": 1203,
-          "playing": null,
+          "metadata": 2023,
+          "loadeddata": 2057,
+          "first_frame": 2086,
+          "first_presented_frame": 2086,
+          "first_frame_source": "requestVideoFrameCallback",
+          "frame_detection_timeout": false,
+          "frame_metadata": {
+            "mediaTime": 0,
+            "presentationTime": 2706.8,
+            "presentedFrames": 1
+          },
+          "is_valid_measurement": true,
+          "playing": 2057,
           "storyboard_start": null,
           "storyboard_quick_ready": null,
           "reported": true
         },
         "timing": {
-          "startTime": 626,
-          "requestStart": 651,
-          "responseStart": 1448,
-          "ttfb": 822
+          "startTime": 687,
+          "requestStart": 688,
+          "responseStart": 1526,
+          "ttfb": 839
         },
-        "ttff": 1203,
-        "ttfb": 822,
+        "ttff": 2086,
+        "is_valid": true,
+        "source": "requestVideoFrameCallback",
+        "timed_out": false,
+        "sanity_ok": true,
+        "ttfb": 839,
         "stream_src": 1,
-        "metadata": 0,
-        "loadeddata": 0,
-        "playing": 0
-      },
-      {
-        "metrics": {
-          "videoId": "16440393",
-          "mode": "modal",
-          "cache": "prefetch",
-          "stream_src": 0,
-          "details_ready": 50,
-          "metadata": null,
-          "loadeddata": null,
-          "first_frame": 1207,
-          "playing": null,
-          "storyboard_start": null,
-          "storyboard_quick_ready": null,
-          "reported": true
-        },
-        "timing": {
-          "startTime": 699,
-          "requestStart": 700,
-          "responseStart": 1495,
-          "ttfb": 795
-        },
-        "ttff": 1207,
-        "ttfb": 795,
-        "stream_src": 0,
-        "metadata": 0,
-        "loadeddata": 0,
-        "playing": 0
-      }
-    ]
-  },
-  "Camwhores Cold (/watch)": {
-    "ttff": {
-      "median": 1135,
-      "min": 903,
-      "max": 1217,
-      "stddev": 162.9,
-      "count": 3
-    },
-    "ttfb": {
-      "median": 0,
-      "min": 0,
-      "max": 0,
-      "stddev": 0,
-      "count": 0
-    },
-    "metadata": {
-      "median": 1105,
-      "min": 878,
-      "max": 1571,
-      "stddev": 353.3,
-      "count": 3
-    },
-    "loadeddata": {
-      "median": 1132,
-      "min": 905,
-      "max": 1603,
-      "stddev": 356.0,
-      "count": 3
-    },
-    "playing": {
-      "median": 1133,
-      "min": 906,
-      "max": 1604,
-      "stddev": 356.0,
-      "count": 3
-    },
-    "stream_src": {
-      "median": 2,
-      "min": 2,
-      "max": 2,
-      "stddev": 0.0,
-      "count": 3
-    },
-    "runs": [
-      {
-        "metrics": {
-          "videoId": "cw_17486750",
-          "mode": "/watch",
-          "cache": "cold",
-          "stream_src": 2,
-          "details_ready": 89,
-          "metadata": 1571,
-          "loadeddata": 1603,
-          "first_frame": 1217,
-          "playing": 1604,
-          "storyboard_start": null,
-          "storyboard_quick_ready": null,
-          "reported": true
-        },
-        "timing": null,
-        "ttff": 1217,
-        "ttfb": null,
-        "stream_src": 2,
-        "metadata": 1571,
-        "loadeddata": 1603,
-        "playing": 1604
-      },
-      {
-        "metrics": {
-          "videoId": "cw_17486750",
-          "mode": "/watch",
-          "cache": "cold",
-          "stream_src": 2,
-          "details_ready": 11,
-          "metadata": 878,
-          "loadeddata": 905,
-          "first_frame": 903,
-          "playing": 906,
-          "storyboard_start": null,
-          "storyboard_quick_ready": null,
-          "reported": true
-        },
-        "timing": null,
-        "ttff": 903,
-        "ttfb": null,
-        "stream_src": 2,
-        "metadata": 878,
-        "loadeddata": 905,
-        "playing": 906
-      },
-      {
-        "metrics": {
-          "videoId": "cw_17486750",
-          "mode": "/watch",
-          "cache": "cold",
-          "stream_src": 2,
-          "details_ready": 11,
-          "metadata": 1105,
-          "loadeddata": 1132,
-          "first_frame": 1135,
-          "playing": 1133,
-          "storyboard_start": null,
-          "storyboard_quick_ready": null,
-          "reported": true
-        },
-        "timing": null,
-        "ttff": 1135,
-        "ttfb": null,
-        "stream_src": 2,
-        "metadata": 1105,
-        "loadeddata": 1132,
-        "playing": 1133
-      }
-    ]
-  },
-  "Camwhores Warm (/watch)": {
-    "ttff": {
-      "median": 1058,
-      "min": 899,
-      "max": 1066,
-      "stddev": 94.2,
-      "count": 3
-    },
-    "ttfb": {
-      "median": 0,
-      "min": 0,
-      "max": 0,
-      "stddev": 0,
-      "count": 0
-    },
-    "metadata": {
-      "median": 1006,
-      "min": 861,
-      "max": 1034,
-      "stddev": 92.9,
-      "count": 3
-    },
-    "loadeddata": {
-      "median": 1057,
-      "min": 893,
-      "max": 1065,
-      "stddev": 97.1,
-      "count": 3
-    },
-    "playing": {
-      "median": 1058,
-      "min": 895,
-      "max": 1066,
-      "stddev": 96.5,
-      "count": 3
-    },
-    "stream_src": {
-      "median": 2,
-      "min": 2,
-      "max": 2,
-      "stddev": 0.0,
-      "count": 3
-    },
-    "runs": [
-      {
-        "metrics": {
-          "videoId": "cw_17486750",
-          "mode": "/watch",
-          "cache": "cold",
-          "stream_src": 2,
-          "details_ready": 8,
-          "metadata": 1006,
-          "loadeddata": 1057,
-          "first_frame": null,
-          "playing": 1058,
-          "storyboard_start": null,
-          "storyboard_quick_ready": null,
-          "reported": true
-        },
-        "timing": null,
-        "ttff": 1058,
-        "ttfb": null,
-        "stream_src": 2,
-        "metadata": 1006,
-        "loadeddata": 1057,
-        "playing": 1058
-      },
-      {
-        "metrics": {
-          "videoId": "cw_17486750",
-          "mode": "/watch",
-          "cache": "cold",
-          "stream_src": 2,
-          "details_ready": 10,
-          "metadata": 1034,
-          "loadeddata": 1065,
-          "first_frame": null,
-          "playing": 1066,
-          "storyboard_start": null,
-          "storyboard_quick_ready": null,
-          "reported": true
-        },
-        "timing": null,
-        "ttff": 1066,
-        "ttfb": null,
-        "stream_src": 2,
-        "metadata": 1034,
-        "loadeddata": 1065,
-        "playing": 1066
-      },
-      {
-        "metrics": {
-          "videoId": "cw_17486750",
-          "mode": "/watch",
-          "cache": "cold",
-          "stream_src": 2,
-          "details_ready": 9,
-          "metadata": 861,
-          "loadeddata": 893,
-          "first_frame": 899,
-          "playing": 895,
-          "storyboard_start": null,
-          "storyboard_quick_ready": null,
-          "reported": true
-        },
-        "timing": null,
-        "ttff": 899,
-        "ttfb": null,
-        "stream_src": 2,
-        "metadata": 861,
-        "loadeddata": 893,
-        "playing": 895
-      }
-    ]
-  },
-  "Camwhores Warm (Modal)": {
-    "ttff": {
-      "median": 1209,
-      "min": 1202,
-      "max": 1211,
-      "stddev": 4.7,
-      "count": 3
-    },
-    "ttfb": {
-      "median": 780,
-      "min": 776,
-      "max": 786,
-      "stddev": 5.0,
-      "count": 3
-    },
-    "metadata": {
-      "median": 0,
-      "min": 0,
-      "max": 0,
-      "stddev": 0,
-      "count": 0
-    },
-    "loadeddata": {
-      "median": 0,
-      "min": 0,
-      "max": 0,
-      "stddev": 0,
-      "count": 0
-    },
-    "playing": {
-      "median": 0,
-      "min": 0,
-      "max": 0,
-      "stddev": 0,
-      "count": 0
-    },
-    "stream_src": {
-      "median": 1,
-      "min": 1,
-      "max": 1,
-      "stddev": 0.0,
-      "count": 1
-    },
-    "runs": [
-      {
-        "metrics": {
-          "videoId": "16440393",
-          "mode": "modal",
-          "cache": "prefetch",
-          "stream_src": 0,
-          "details_ready": 43,
-          "metadata": null,
-          "loadeddata": null,
-          "first_frame": 1211,
-          "playing": null,
-          "storyboard_start": null,
-          "storyboard_quick_ready": null,
-          "reported": true
-        },
-        "timing": {
-          "startTime": 747,
-          "requestStart": 748,
-          "responseStart": 1533,
-          "ttfb": 786
-        },
-        "ttff": 1211,
-        "ttfb": 786,
-        "stream_src": 0,
-        "metadata": 0,
-        "loadeddata": 0,
-        "playing": 0
+        "metadata": 2023,
+        "loadeddata": 2057,
+        "playing": 2057
       },
       {
         "metrics": {
@@ -937,55 +1252,749 @@
           "mode": "modal",
           "cache": "prefetch",
           "stream_src": 1,
-          "details_ready": 38,
-          "metadata": null,
-          "loadeddata": null,
-          "first_frame": 1209,
-          "playing": null,
+          "details_ready": 44,
+          "metadata": 1941,
+          "loadeddata": 1977,
+          "first_frame": 2045,
+          "first_presented_frame": 2045,
+          "first_frame_source": "requestVideoFrameCallback",
+          "frame_detection_timeout": false,
+          "frame_metadata": {
+            "mediaTime": 0,
+            "presentationTime": 2720.7,
+            "presentedFrames": 1
+          },
+          "is_valid_measurement": true,
+          "playing": 1978,
           "storyboard_start": null,
           "storyboard_quick_ready": null,
           "reported": true
         },
         "timing": {
-          "startTime": 754,
-          "requestStart": 756,
-          "responseStart": 1531,
-          "ttfb": 776
+          "startTime": 778,
+          "requestStart": 779,
+          "responseStart": 1558,
+          "ttfb": 780
         },
-        "ttff": 1209,
-        "ttfb": 776,
+        "ttff": 2045,
+        "is_valid": true,
+        "source": "requestVideoFrameCallback",
+        "timed_out": false,
+        "sanity_ok": true,
+        "ttfb": 780,
         "stream_src": 1,
-        "metadata": 0,
-        "loadeddata": 0,
-        "playing": 0
+        "metadata": 1941,
+        "loadeddata": 1977,
+        "playing": 1978
+      }
+    ]
+  },
+  "Camwhores Cold (/watch)": {
+    "ttff": {
+      "median": 885,
+      "min": 874,
+      "max": 1736,
+      "stddev": 378.2,
+      "count": 5
+    },
+    "ttfb": {
+      "median": 0,
+      "min": 0,
+      "max": 0,
+      "stddev": 0,
+      "count": 0
+    },
+    "metadata": {
+      "median": 854,
+      "min": 835,
+      "max": 1692,
+      "stddev": 374.8,
+      "count": 5
+    },
+    "loadeddata": {
+      "median": 882,
+      "min": 876,
+      "max": 1725,
+      "stddev": 373.9,
+      "count": 5
+    },
+    "playing": {
+      "median": 883,
+      "min": 876,
+      "max": 1726,
+      "stddev": 374.0,
+      "count": 5
+    },
+    "stream_src": {
+      "median": 2,
+      "min": 1,
+      "max": 2,
+      "stddev": 0.4,
+      "count": 5
+    },
+    "valid_runs": 5,
+    "total_runs": 5,
+    "timeouts": 0,
+    "sources": [
+      "requestVideoFrameCallback"
+    ],
+    "all_sanity_ok": true,
+    "runs": [
+      {
+        "metrics": {
+          "videoId": "cw_17486750",
+          "mode": "/watch",
+          "cache": "cold",
+          "stream_src": 2,
+          "details_ready": 285,
+          "metadata": 1692,
+          "loadeddata": 1725,
+          "first_frame": 1736,
+          "first_presented_frame": 1736,
+          "first_frame_source": "requestVideoFrameCallback",
+          "frame_detection_timeout": false,
+          "frame_metadata": {
+            "mediaTime": 0,
+            "presentationTime": 1747.8,
+            "presentedFrames": 1
+          },
+          "is_valid_measurement": true,
+          "playing": 1726,
+          "storyboard_start": null,
+          "storyboard_quick_ready": null,
+          "reported": true
+        },
+        "timing": null,
+        "ttff": 1736,
+        "is_valid": true,
+        "source": "requestVideoFrameCallback",
+        "timed_out": false,
+        "sanity_ok": true,
+        "ttfb": null,
+        "stream_src": 2,
+        "metadata": 1692,
+        "loadeddata": 1725,
+        "playing": 1726
       },
       {
         "metrics": {
-          "videoId": "16440393",
+          "videoId": "cw_17486750",
+          "mode": "/watch",
+          "cache": "cold",
+          "stream_src": 2,
+          "details_ready": 31,
+          "metadata": 854,
+          "loadeddata": 882,
+          "first_frame": 885,
+          "first_presented_frame": 885,
+          "first_frame_source": "requestVideoFrameCallback",
+          "frame_detection_timeout": false,
+          "frame_metadata": {
+            "mediaTime": 0,
+            "presentationTime": 900.6,
+            "presentedFrames": 1
+          },
+          "is_valid_measurement": true,
+          "playing": 883,
+          "storyboard_start": null,
+          "storyboard_quick_ready": null,
+          "reported": true
+        },
+        "timing": null,
+        "ttff": 885,
+        "is_valid": true,
+        "source": "requestVideoFrameCallback",
+        "timed_out": false,
+        "sanity_ok": true,
+        "ttfb": null,
+        "stream_src": 2,
+        "metadata": 854,
+        "loadeddata": 882,
+        "playing": 883
+      },
+      {
+        "metrics": {
+          "videoId": "cw_17486750",
+          "mode": "/watch",
+          "cache": "cold",
+          "stream_src": 1,
+          "details_ready": 31,
+          "metadata": 847,
+          "loadeddata": 876,
+          "first_frame": 874,
+          "first_presented_frame": 874,
+          "first_frame_source": "requestVideoFrameCallback",
+          "frame_detection_timeout": false,
+          "frame_metadata": {
+            "mediaTime": 0,
+            "presentationTime": 891.8,
+            "presentedFrames": 1
+          },
+          "is_valid_measurement": true,
+          "playing": 876,
+          "storyboard_start": null,
+          "storyboard_quick_ready": null,
+          "reported": true
+        },
+        "timing": null,
+        "ttff": 874,
+        "is_valid": true,
+        "source": "requestVideoFrameCallback",
+        "timed_out": false,
+        "sanity_ok": true,
+        "ttfb": null,
+        "stream_src": 1,
+        "metadata": 847,
+        "loadeddata": 876,
+        "playing": 876
+      },
+      {
+        "metrics": {
+          "videoId": "cw_17486750",
+          "mode": "/watch",
+          "cache": "cold",
+          "stream_src": 2,
+          "details_ready": 32,
+          "metadata": 884,
+          "loadeddata": 919,
+          "first_frame": 928,
+          "first_presented_frame": 928,
+          "first_frame_source": "requestVideoFrameCallback",
+          "frame_detection_timeout": false,
+          "frame_metadata": {
+            "mediaTime": 0,
+            "presentationTime": 937.2,
+            "presentedFrames": 1
+          },
+          "is_valid_measurement": true,
+          "playing": 920,
+          "storyboard_start": null,
+          "storyboard_quick_ready": null,
+          "reported": true
+        },
+        "timing": null,
+        "ttff": 928,
+        "is_valid": true,
+        "source": "requestVideoFrameCallback",
+        "timed_out": false,
+        "sanity_ok": true,
+        "ttfb": null,
+        "stream_src": 2,
+        "metadata": 884,
+        "loadeddata": 919,
+        "playing": 920
+      },
+      {
+        "metrics": {
+          "videoId": "cw_17486750",
+          "mode": "/watch",
+          "cache": "cold",
+          "stream_src": 2,
+          "details_ready": 32,
+          "metadata": 835,
+          "loadeddata": 882,
+          "first_frame": 880,
+          "first_presented_frame": 880,
+          "first_frame_source": "requestVideoFrameCallback",
+          "frame_detection_timeout": false,
+          "frame_metadata": {
+            "mediaTime": 0,
+            "presentationTime": 899.6,
+            "presentedFrames": 1
+          },
+          "is_valid_measurement": true,
+          "playing": 883,
+          "storyboard_start": null,
+          "storyboard_quick_ready": null,
+          "reported": true
+        },
+        "timing": null,
+        "ttff": 880,
+        "is_valid": true,
+        "source": "requestVideoFrameCallback",
+        "timed_out": false,
+        "sanity_ok": true,
+        "ttfb": null,
+        "stream_src": 2,
+        "metadata": 835,
+        "loadeddata": 882,
+        "playing": 883
+      }
+    ]
+  },
+  "Camwhores Warm (/watch)": {
+    "ttff": {
+      "median": 865,
+      "min": 846,
+      "max": 880,
+      "stddev": 13.6,
+      "count": 5
+    },
+    "ttfb": {
+      "median": 0,
+      "min": 0,
+      "max": 0,
+      "stddev": 0,
+      "count": 0
+    },
+    "metadata": {
+      "median": 825,
+      "min": 820,
+      "max": 840,
+      "stddev": 7.7,
+      "count": 5
+    },
+    "loadeddata": {
+      "median": 868,
+      "min": 849,
+      "max": 869,
+      "stddev": 9.8,
+      "count": 5
+    },
+    "playing": {
+      "median": 869,
+      "min": 850,
+      "max": 870,
+      "stddev": 10.0,
+      "count": 5
+    },
+    "stream_src": {
+      "median": 2,
+      "min": 1,
+      "max": 2,
+      "stddev": 0.5,
+      "count": 5
+    },
+    "valid_runs": 5,
+    "total_runs": 5,
+    "timeouts": 0,
+    "sources": [
+      "requestVideoFrameCallback"
+    ],
+    "all_sanity_ok": true,
+    "runs": [
+      {
+        "metrics": {
+          "videoId": "cw_17486750",
+          "mode": "/watch",
+          "cache": "cold",
+          "stream_src": 1,
+          "details_ready": 11,
+          "metadata": 820,
+          "loadeddata": 849,
+          "first_frame": 846,
+          "first_presented_frame": 846,
+          "first_frame_source": "requestVideoFrameCallback",
+          "frame_detection_timeout": false,
+          "frame_metadata": {
+            "mediaTime": 0,
+            "presentationTime": 865.3,
+            "presentedFrames": 1
+          },
+          "is_valid_measurement": true,
+          "playing": 850,
+          "storyboard_start": null,
+          "storyboard_quick_ready": null,
+          "reported": true
+        },
+        "timing": null,
+        "ttff": 846,
+        "is_valid": true,
+        "source": "requestVideoFrameCallback",
+        "timed_out": false,
+        "sanity_ok": true,
+        "ttfb": null,
+        "stream_src": 1,
+        "metadata": 820,
+        "loadeddata": 849,
+        "playing": 850
+      },
+      {
+        "metrics": {
+          "videoId": "cw_17486750",
+          "mode": "/watch",
+          "cache": "cold",
+          "stream_src": 2,
+          "details_ready": 35,
+          "metadata": 824,
+          "loadeddata": 869,
+          "first_frame": 876,
+          "first_presented_frame": 876,
+          "first_frame_source": "requestVideoFrameCallback",
+          "frame_detection_timeout": false,
+          "frame_metadata": {
+            "mediaTime": 0,
+            "presentationTime": 891,
+            "presentedFrames": 1
+          },
+          "is_valid_measurement": true,
+          "playing": 870,
+          "storyboard_start": null,
+          "storyboard_quick_ready": null,
+          "reported": true
+        },
+        "timing": null,
+        "ttff": 876,
+        "is_valid": true,
+        "source": "requestVideoFrameCallback",
+        "timed_out": false,
+        "sanity_ok": true,
+        "ttfb": null,
+        "stream_src": 2,
+        "metadata": 824,
+        "loadeddata": 869,
+        "playing": 870
+      },
+      {
+        "metrics": {
+          "videoId": "cw_17486750",
+          "mode": "/watch",
+          "cache": "cold",
+          "stream_src": 2,
+          "details_ready": 12,
+          "metadata": 825,
+          "loadeddata": 853,
+          "first_frame": 859,
+          "first_presented_frame": 859,
+          "first_frame_source": "requestVideoFrameCallback",
+          "frame_detection_timeout": false,
+          "frame_metadata": {
+            "mediaTime": 0,
+            "presentationTime": 899,
+            "presentedFrames": 1
+          },
+          "is_valid_measurement": true,
+          "playing": 853,
+          "storyboard_start": null,
+          "storyboard_quick_ready": null,
+          "reported": true
+        },
+        "timing": null,
+        "ttff": 859,
+        "is_valid": true,
+        "source": "requestVideoFrameCallback",
+        "timed_out": false,
+        "sanity_ok": true,
+        "ttfb": null,
+        "stream_src": 2,
+        "metadata": 825,
+        "loadeddata": 853,
+        "playing": 853
+      },
+      {
+        "metrics": {
+          "videoId": "cw_17486750",
+          "mode": "/watch",
+          "cache": "cold",
+          "stream_src": 1,
+          "details_ready": 8,
+          "metadata": 825,
+          "loadeddata": 869,
+          "first_frame": 880,
+          "first_presented_frame": 880,
+          "first_frame_source": "requestVideoFrameCallback",
+          "frame_detection_timeout": false,
+          "frame_metadata": {
+            "mediaTime": 0,
+            "presentationTime": 910.3,
+            "presentedFrames": 1
+          },
+          "is_valid_measurement": true,
+          "playing": 870,
+          "storyboard_start": null,
+          "storyboard_quick_ready": null,
+          "reported": true
+        },
+        "timing": null,
+        "ttff": 880,
+        "is_valid": true,
+        "source": "requestVideoFrameCallback",
+        "timed_out": false,
+        "sanity_ok": true,
+        "ttfb": null,
+        "stream_src": 1,
+        "metadata": 825,
+        "loadeddata": 869,
+        "playing": 870
+      },
+      {
+        "metrics": {
+          "videoId": "cw_17486750",
+          "mode": "/watch",
+          "cache": "cold",
+          "stream_src": 2,
+          "details_ready": 35,
+          "metadata": 840,
+          "loadeddata": 868,
+          "first_frame": 865,
+          "first_presented_frame": 865,
+          "first_frame_source": "requestVideoFrameCallback",
+          "frame_detection_timeout": false,
+          "frame_metadata": {
+            "mediaTime": 0,
+            "presentationTime": 888.6,
+            "presentedFrames": 1
+          },
+          "is_valid_measurement": true,
+          "playing": 869,
+          "storyboard_start": null,
+          "storyboard_quick_ready": null,
+          "reported": true
+        },
+        "timing": null,
+        "ttff": 865,
+        "is_valid": true,
+        "source": "requestVideoFrameCallback",
+        "timed_out": false,
+        "sanity_ok": true,
+        "ttfb": null,
+        "stream_src": 2,
+        "metadata": 840,
+        "loadeddata": 868,
+        "playing": 869
+      }
+    ]
+  },
+  "Camwhores Warm (Modal)": {
+    "ttff": {
+      "median": 989,
+      "min": 916,
+      "max": 2703,
+      "stddev": 806.5,
+      "count": 5
+    },
+    "ttfb": {
+      "median": 1152.5,
+      "min": 758,
+      "max": 1547,
+      "stddev": 557.9,
+      "count": 2
+    },
+    "metadata": {
+      "median": 895,
+      "min": 849,
+      "max": 2629,
+      "stddev": 806.0,
+      "count": 5
+    },
+    "loadeddata": {
+      "median": 923,
+      "min": 883,
+      "max": 2662,
+      "stddev": 807.7,
+      "count": 5
+    },
+    "playing": {
+      "median": 924,
+      "min": 883,
+      "max": 2663,
+      "stddev": 807.9,
+      "count": 5
+    },
+    "stream_src": {
+      "median": 1,
+      "min": 1,
+      "max": 1,
+      "stddev": 0.0,
+      "count": 5
+    },
+    "valid_runs": 5,
+    "total_runs": 5,
+    "timeouts": 0,
+    "sources": [
+      "requestVideoFrameCallback"
+    ],
+    "all_sanity_ok": true,
+    "runs": [
+      {
+        "metrics": {
+          "videoId": "cw_17486750",
           "mode": "modal",
           "cache": "prefetch",
-          "stream_src": 0,
-          "details_ready": 35,
-          "metadata": null,
-          "loadeddata": null,
-          "first_frame": 1202,
-          "playing": null,
+          "stream_src": 1,
+          "details_ready": 54,
+          "metadata": 870,
+          "loadeddata": 899,
+          "first_frame": 916,
+          "first_presented_frame": 916,
+          "first_frame_source": "requestVideoFrameCallback",
+          "frame_detection_timeout": false,
+          "frame_metadata": {
+            "mediaTime": 0,
+            "presentationTime": 1762.5,
+            "presentedFrames": 1
+          },
+          "is_valid_measurement": true,
+          "playing": 899,
+          "storyboard_start": null,
+          "storyboard_quick_ready": null,
+          "reported": true
+        },
+        "timing": null,
+        "ttff": 916,
+        "is_valid": true,
+        "source": "requestVideoFrameCallback",
+        "timed_out": false,
+        "sanity_ok": true,
+        "ttfb": null,
+        "stream_src": 1,
+        "metadata": 870,
+        "loadeddata": 899,
+        "playing": 899
+      },
+      {
+        "metrics": {
+          "videoId": "cw_17486750",
+          "mode": "modal",
+          "cache": "prefetch",
+          "stream_src": 1,
+          "details_ready": 49,
+          "metadata": 895,
+          "loadeddata": 923,
+          "first_frame": 989,
+          "first_presented_frame": 989,
+          "first_frame_source": "requestVideoFrameCallback",
+          "frame_detection_timeout": false,
+          "frame_metadata": {
+            "mediaTime": 0,
+            "presentationTime": 1730.1,
+            "presentedFrames": 1
+          },
+          "is_valid_measurement": true,
+          "playing": 924,
+          "storyboard_start": null,
+          "storyboard_quick_ready": null,
+          "reported": true
+        },
+        "timing": null,
+        "ttff": 989,
+        "is_valid": true,
+        "source": "requestVideoFrameCallback",
+        "timed_out": false,
+        "sanity_ok": true,
+        "ttfb": null,
+        "stream_src": 1,
+        "metadata": 895,
+        "loadeddata": 923,
+        "playing": 924
+      },
+      {
+        "metrics": {
+          "videoId": "cw_17486750",
+          "mode": "modal",
+          "cache": "prefetch",
+          "stream_src": 1,
+          "details_ready": 39,
+          "metadata": 849,
+          "loadeddata": 883,
+          "first_frame": 939,
+          "first_presented_frame": 939,
+          "first_frame_source": "requestVideoFrameCallback",
+          "frame_detection_timeout": false,
+          "frame_metadata": {
+            "mediaTime": 0,
+            "presentationTime": 1746.4,
+            "presentedFrames": 1
+          },
+          "is_valid_measurement": true,
+          "playing": 883,
+          "storyboard_start": null,
+          "storyboard_quick_ready": null,
+          "reported": true
+        },
+        "timing": null,
+        "ttff": 939,
+        "is_valid": true,
+        "source": "requestVideoFrameCallback",
+        "timed_out": false,
+        "sanity_ok": true,
+        "ttfb": null,
+        "stream_src": 1,
+        "metadata": 849,
+        "loadeddata": 883,
+        "playing": 883
+      },
+      {
+        "metrics": {
+          "videoId": "16440394",
+          "mode": "modal",
+          "cache": "prefetch",
+          "stream_src": 1,
+          "details_ready": 833,
+          "metadata": 2629,
+          "loadeddata": 2662,
+          "first_frame": 2703,
+          "first_presented_frame": 2703,
+          "first_frame_source": "requestVideoFrameCallback",
+          "frame_detection_timeout": false,
+          "frame_metadata": {
+            "mediaTime": 0,
+            "presentationTime": 3294.8,
+            "presentedFrames": 1
+          },
+          "is_valid_measurement": true,
+          "playing": 2663,
           "storyboard_start": null,
           "storyboard_quick_ready": null,
           "reported": true
         },
         "timing": {
-          "startTime": 741,
-          "requestStart": 742,
-          "responseStart": 1521,
-          "ttfb": 780
+          "startTime": 678,
+          "requestStart": 679,
+          "responseStart": 2225,
+          "ttfb": 1547
         },
-        "ttff": 1202,
-        "ttfb": 780,
-        "stream_src": 0,
-        "metadata": 0,
-        "loadeddata": 0,
-        "playing": 0
+        "ttff": 2703,
+        "is_valid": true,
+        "source": "requestVideoFrameCallback",
+        "timed_out": false,
+        "sanity_ok": true,
+        "ttfb": 1547,
+        "stream_src": 1,
+        "metadata": 2629,
+        "loadeddata": 2662,
+        "playing": 2663
+      },
+      {
+        "metrics": {
+          "videoId": "16440394",
+          "mode": "modal",
+          "cache": "prefetch",
+          "stream_src": 1,
+          "details_ready": 40,
+          "metadata": 1903,
+          "loadeddata": 1938,
+          "first_frame": 1988,
+          "first_presented_frame": 1988,
+          "first_frame_source": "requestVideoFrameCallback",
+          "frame_detection_timeout": false,
+          "frame_metadata": {
+            "mediaTime": 0,
+            "presentationTime": 2623.8,
+            "presentedFrames": 1
+          },
+          "is_valid_measurement": true,
+          "playing": 1938,
+          "storyboard_start": null,
+          "storyboard_quick_ready": null,
+          "reported": true
+        },
+        "timing": {
+          "startTime": 724,
+          "requestStart": 724,
+          "responseStart": 1482,
+          "ttfb": 758
+        },
+        "ttff": 1988,
+        "is_valid": true,
+        "source": "requestVideoFrameCallback",
+        "timed_out": false,
+        "sanity_ok": true,
+        "ttfb": 758,
+        "stream_src": 1,
+        "metadata": 1903,
+        "loadeddata": 1938,
+        "playing": 1938
       }
     ]
   }

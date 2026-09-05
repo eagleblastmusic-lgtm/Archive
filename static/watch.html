@@ -882,11 +882,12 @@
       if (perfTracker) {
         perfTracker.attachToPlayer(player, hideWatchLoader);
       } else if (window.ArchivebatePlayerCore && typeof ArchivebatePlayerCore.waitForPresentedFrame === 'function') {
-        ArchivebatePlayerCore.waitForPresentedFrame(player).then(hideWatchLoader);
+        ArchivebatePlayerCore.waitForPresentedFrame(player).then(res => {
+          if (res && res.presented) hideWatchLoader();
+        });
       }
       player.addEventListener('loadeddata', () => {
         logPerf('player loadeddata');
-        hideWatchLoader();
       }, { once: true });
       player.addEventListener('playing', () => {
         logPerf('player playing');

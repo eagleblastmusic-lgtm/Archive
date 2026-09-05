@@ -76,7 +76,7 @@ def warm_video_cache(video_id: str):
     except Exception as e:
         print(f"Failed to warm cache for {video_id}: {e}")
 
-def measure_run_watch(browser, video_id: str, is_cold: bool = False, timeout_sec: float = 14.0):
+def measure_run_watch(browser, video_id: str, is_cold: bool = False, timeout_sec: float = 16.0):
     if is_cold:
         clear_video_cache(video_id)
     else:
@@ -91,6 +91,8 @@ def measure_run_watch(browser, video_id: str, is_cold: bool = False, timeout_sec
     metrics = None
     resource_timing = None
     deadline = time.perf_counter() + timeout_sec
+    playing_seen_at = None
+
     while time.perf_counter() < deadline:
         res = page.evaluate("""() => {
             const tracker = window.__archivebatePerfTracker;
@@ -108,16 +110,25 @@ def measure_run_watch(browser, video_id: str, is_cold: bool = False, timeout_sec
             }
             return { metrics: m, timing: timing };
         }""")
-        if res and res.get("metrics") and (res["metrics"].get("first_frame") or res["metrics"].get("playing")):
-            metrics = res["metrics"]
-            resource_timing = res.get("timing")
-            break
+        if res and res.get("metrics"):
+            m = res["metrics"]
+            if m.get("first_presented_frame") is not None or m.get("frame_detection_timeout") or m.get("video_error"):
+                metrics = m
+                resource_timing = res.get("timing")
+                break
+            if m.get("playing") is not None:
+                if playing_seen_at is None:
+                    playing_seen_at = time.perf_counter()
+                elif (time.perf_counter() - playing_seen_at) > 2.0:
+                    metrics = m
+                    resource_timing = res.get("timing")
+                    break
         time.sleep(0.05)
 
     context.close()
     return metrics, resource_timing
 
-def measure_run_modal(browser, video_id: str, mode: str = "cold", timeout_sec: float = 14.0):
+def measure_run_modal(browser, video_id: str, mode: str = "cold", timeout_sec: float = 16.0):
     if mode == "cold":
         clear_video_cache(video_id)
     elif mode == "warm":
@@ -146,6 +157,8 @@ def measure_run_modal(browser, video_id: str, mode: str = "cold", timeout_sec: f
     metrics = None
     resource_timing = None
     deadline = time.perf_counter() + timeout_sec
+    playing_seen_at = None
+
     while time.perf_counter() < deadline:
         res = page.evaluate("""() => {
             const tracker = window.__archivebatePerfTracker;
@@ -163,10 +176,19 @@ def measure_run_modal(browser, video_id: str, mode: str = "cold", timeout_sec: f
             }
             return { metrics: m, timing: timing };
         }""")
-        if res and res.get("metrics") and (res["metrics"].get("first_frame") or res["metrics"].get("playing")):
-            metrics = res["metrics"]
-            resource_timing = res.get("timing")
-            break
+        if res and res.get("metrics"):
+            m = res["metrics"]
+            if m.get("first_presented_frame") is not None or m.get("frame_detection_timeout") or m.get("video_error"):
+                metrics = m
+                resource_timing = res.get("timing")
+                break
+            if m.get("playing") is not None:
+                if playing_seen_at is None:
+                    playing_seen_at = time.perf_counter()
+                elif (time.perf_counter() - playing_seen_at) > 2.0:
+                    metrics = m
+                    resource_timing = res.get("timing")
+                    break
         time.sleep(0.05)
 
     context.close()
@@ -205,7 +227,7 @@ def run_benchmarks():
         print(f"Selected Archivebate ID: {test_ab_id}")
         print(f"Selected Camwhores ID: {test_cw_id}")
 
-        iterations = 3
+        iterations = 5
         scenarios = [
             ("Archivebate Cold (/watch)", "watch", test_ab_id, True, "cold"),
             ("Archivebate Warm (/watch)", "watch", test_ab_id, False, "warm"),
@@ -242,17 +264,32 @@ def run_benchmarks():
                             m, timing = measure_run_modal(browser, vid, mode=modal_mode)
                         
                         if m:
-                            first_frame = m.get("first_frame") or m.get("playing")
+                            is_valid = bool(m.get("is_valid_measurement", False))
+                            first_frame = m.get("first_frame") if is_valid else None
+                            source = m.get("first_frame_source") or ("timeout" if m.get("frame_detection_timeout") else "none")
+                            timed_out = bool(m.get("frame_detection_timeout", False)) or (first_frame is None)
                             ttfb = timing.get("ttfb") if timing else None
                             src = m.get("stream_src") or 0
                             meta = m.get("metadata") or 0
                             loaded = m.get("loadeddata") or 0
                             playing = m.get("playing") or 0
-                            print(f"  Run {i+1}: TTFF={first_frame}ms, TTFB={ttfb}ms, meta={meta}ms, loaded={loaded}ms, playing={playing}ms", flush=True)
+
+                            # Sanity check: klatka nie może pojawić się ponad 25ms przed loadeddata
+                            sanity_ok = True
+                            if first_frame is not None and loaded > 0:
+                                if first_frame < (loaded - 25):
+                                    sanity_ok = False
+
+                            status_str = f"TTFF={first_frame}ms [src={source}]" if (first_frame and sanity_ok) else f"FAILED/TIMEOUT [src={source}]"
+                            print(f"  Run {i+1}: {status_str}, TTFB={ttfb}ms, meta={meta}ms, loaded={loaded}ms, playing={playing}ms (sanity={'OK' if sanity_ok else 'VIOLATED'})", flush=True)
                             raw_runs.append({
                                 "metrics": m,
                                 "timing": timing,
-                                "ttff": first_frame,
+                                "ttff": first_frame if sanity_ok else None,
+                                "is_valid": is_valid and sanity_ok,
+                                "source": source,
+                                "timed_out": timed_out or not sanity_ok,
+                                "sanity_ok": sanity_ok,
                                 "ttfb": ttfb,
                                 "stream_src": src,
                                 "metadata": meta,
@@ -260,25 +297,60 @@ def run_benchmarks():
                                 "playing": playing
                             })
                         else:
-                            print(f"  Run {i+1}: TIMEOUT / NO FRAME", flush=True)
+                            print(f"  Run {i+1}: TIMEOUT / NO METRICS", flush=True)
+                            raw_runs.append({
+                                "metrics": None,
+                                "timing": None,
+                                "ttff": None,
+                                "is_valid": False,
+                                "source": "timeout",
+                                "timed_out": True,
+                                "sanity_ok": False,
+                                "ttfb": None,
+                                "stream_src": None,
+                                "metadata": None,
+                                "loadeddata": None,
+                                "playing": None
+                            })
                     except Exception as e:
                         print(f"  Run {i+1}: ERROR {e}", flush=True)
+                        raw_runs.append({
+                            "metrics": None,
+                            "timing": None,
+                            "ttff": None,
+                            "is_valid": False,
+                            "source": f"error: {e}",
+                            "timed_out": True,
+                            "sanity_ok": False,
+                            "ttfb": None,
+                            "stream_src": None,
+                            "metadata": None,
+                            "loadeddata": None,
+                            "playing": None
+                        })
                     time.sleep(0.2)
 
-                ttff_vals = [r["ttff"] for r in raw_runs if r["ttff"]]
+                valid_ttff_runs = [r["ttff"] for r in raw_runs if r["ttff"] is not None and r["is_valid"]]
                 ttfb_vals = [r["ttfb"] for r in raw_runs if r["ttfb"]]
                 meta_vals = [r["metadata"] for r in raw_runs if r["metadata"]]
                 loaded_vals = [r["loadeddata"] for r in raw_runs if r["loadeddata"]]
                 play_vals = [r["playing"] for r in raw_runs if r["playing"]]
                 src_vals = [r["stream_src"] for r in raw_runs if r["stream_src"] is not None]
+                timeouts_count = sum(1 for r in raw_runs if r["timed_out"])
+                sources = list({r["source"] for r in raw_runs if r["source"] and r["source"] != "none"})
 
                 all_results[label] = {
-                    "ttff": stats_summary(ttff_vals),
+                    "ttff": stats_summary(valid_ttff_runs),
                     "ttfb": stats_summary(ttfb_vals),
                     "metadata": stats_summary(meta_vals),
                     "loadeddata": stats_summary(loaded_vals),
                     "playing": stats_summary(play_vals),
                     "stream_src": stats_summary(src_vals),
+                    "valid_runs": len(valid_ttff_runs),
+                    "total_runs": len(raw_runs),
+                    "timeouts": timeouts_count,
+                    "sources": sources,
+                    "all_sanity_ok": all(r["sanity_ok"] for r in raw_runs if r["is_valid"]),
                     "runs": raw_runs
                 }
 
@@ -288,32 +360,42 @@ def run_benchmarks():
         out_path.write_text(json.dumps(all_results, indent=2), encoding="utf-8")
         print(f"\nSaved detailed results to {out_path.resolve()}")
 
-        print("\n" + "=" * 80)
-        print("TIME TO FIRST VIDEO FRAME (TTFF) - REAL BENCHMARK RESULTS")
-        print("=" * 80)
-        header = f"{'Scenario':<38} | {'Median TTFF':<12} | {'Min':<8} | {'Max':<8} | {'StdDev':<8} | {'Runs':<6}"
+        print("\n" + "=" * 115)
+        print("TIME TO FIRST VIDEO FRAME (TTFF) - REAL BENCHMARK RESULTS (MIN 5 RUNS PER SCENARIO)")
+        print("=" * 115)
+        header = f"{'Scenario':<36} | {'Runs':<6} | {'Source':<14} | {'TTFB':<8} | {'Loaded':<8} | {'TTFF (Median)':<14} | {'Min/Max':<14} | {'StdDev':<8} | {'Play':<8} | {'Timeouts':<8}"
         print(header)
         print("-" * len(header))
         for label, res in all_results.items():
             st = res["ttff"]
-            print(f"{label:<38} | {str(st['median']) + ' ms':<12} | {str(st['min']) + ' ms':<8} | {str(st['max']) + ' ms':<8} | {str(st['stddev']) + ' ms':<8} | {st['count']:<6}")
+            ttfb_m = f"{res['ttfb']['median']}ms" if res['ttfb']['count'] else "-"
+            loaded_m = f"{res['loadeddata']['median']}ms" if res['loadeddata']['count'] else "-"
+            play_m = f"{res['playing']['median']}ms" if res['playing']['count'] else "-"
+            ttff_m = f"{st['median']}ms" if st['count'] else "FAILED"
+            min_max = f"{st['min']}/{st['max']}ms" if st['count'] else "-"
+            stdev = f"{st['stddev']}ms" if st['count'] else "-"
+            runs_str = f"{res['valid_runs']}/{res['total_runs']}"
+            src_str = ",".join(res["sources"]) if res["sources"] else "-"
+            if len(src_str) > 14:
+                src_str = src_str[:11] + "..."
+            print(f"{label:<36} | {runs_str:<6} | {src_str:<14} | {ttfb_m:<8} | {loaded_m:<8} | {ttff_m:<14} | {min_max:<14} | {stdev:<8} | {play_m:<8} | {res['timeouts']:<8}")
 
-        print("\n" + "=" * 80)
-        print("STAGE BREAKDOWN (MEDIANS)")
-        print("=" * 80)
-        stage_header = f"{'Scenario':<38} | {'Src (ms)':<9} | {'TTFB (ms)':<10} | {'Meta (ms)':<10} | {'Loaded':<9} | {'TTFF (ms)':<10} | {'Play (ms)':<10}"
-        print(stage_header)
-        print("-" * len(stage_header))
+        print("\n" + "=" * 105)
+        print("TEMPORAL CONSISTENCY & SANITY VERIFICATION")
+        print("=" * 105)
         for label, res in all_results.items():
-            src = res["stream_src"]["median"]
-            ttfb = res["ttfb"]["median"]
-            meta = res["metadata"]["median"]
+            st = res["ttff"]
             loaded = res["loadeddata"]["median"]
-            ttff = res["ttff"]["median"]
             play = res["playing"]["median"]
-            print(f"{label:<38} | {src:<9} | {ttfb:<10} | {meta:<10} | {loaded:<9} | {ttff:<10} | {play:<10}")
+            if st['count'] > 0 and loaded > 0:
+                diff_loaded = st['median'] - loaded
+                diff_play = play - st['median'] if play > 0 else 0
+                sanity_status = "PASS (first_frame >= loadeddata)" if diff_loaded >= -25 else "FAIL (first_frame < loadeddata - 25ms)"
+                print(f"{label:<36}: TTFF={st['median']}ms, loadeddata={loaded}ms (diff: {diff_loaded:+0.1f}ms), playing={play}ms (diff: {diff_play:+0.1f}ms) -> {sanity_status}")
+            else:
+                print(f"{label:<36}: No valid frames measured")
     finally:
-        print("Terminating benchmark server...")
+        print("\nTerminating benchmark server...")
         server_proc.terminate()
         try:
             server_proc.wait(timeout=5)

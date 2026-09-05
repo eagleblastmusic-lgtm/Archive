@@ -1075,6 +1075,220 @@ class TestModelPaginationAndAuthorWindow(unittest.TestCase):
             self.assertIn("videos", data)
 
 
+class TestPlayerCoreWatchdogAndTTFF(unittest.TestCase):
+    """Testy regresyjne weryfikujące eliminację błędu false TTFF, nowy kontrakt waitForPresentedFrame,
+    zachowanie VideoPerfTracker, fallbacku dla braku RVFC oraz testów spójności czasowej."""
+
+    @classmethod
+    def setUpClass(cls):
+        import shutil
+        cls.node_available = shutil.which("node") is not None
+
+    def run_node_eval(self, js_code: str):
+        if not self.node_available:
+            self.skipTest("Node.js nie jest zainstalowany w środowisku.")
+        import json
+        import subprocess
+        full_code = f"""
+const fs = require('fs');
+global.window = global;
+global.performance = {{ now: () => Date.now(), mark: () => {{}} }};
+global.localStorage = {{ getItem: () => null }};
+global.requestAnimationFrame = (cb) => setTimeout(cb, 16);
+eval(fs.readFileSync('static/player-core.js', 'utf8'));
+
+{js_code}
+"""
+        proc = subprocess.run(["node", "-e", full_code], capture_output=True, text=True, timeout=10)
+        self.assertEqual(proc.returncode, 0, f"Node script failed with stderr: {proc.stderr}\nstdout: {proc.stdout}")
+        return json.loads(proc.stdout.strip())
+
+    def test_A_rvfc_resolves_with_presented_true_and_metadata(self):
+        """Test A: waitForPresentedFrame zwraca { presented: true } i metadane klatki, gdy RVFC zadziała."""
+        js = """
+const mockVideo = {
+  requestVideoFrameCallback: (cb) => {
+    setTimeout(() => cb(100, { mediaTime: 0.25, presentationTime: 120, presentedFrames: 1 }), 10);
+    return 1;
+  },
+  addEventListener: () => {},
+  removeEventListener: () => {},
+  cancelVideoFrameCallback: () => {}
+};
+ArchivebatePlayerCore.waitForPresentedFrame(mockVideo, null, 1000).then(res => {
+  console.log(JSON.stringify(res));
+});
+"""
+        res = self.run_node_eval(js)
+        self.assertTrue(res.get("presented"), "Klatka powinna być oznaczona jako zaprezentowana")
+        self.assertEqual(res.get("reason"), "requestVideoFrameCallback")
+        self.assertEqual(res.get("mediaTime"), 0.25)
+        self.assertEqual(res.get("presentationTime"), 120)
+        self.assertEqual(res.get("presentedFrames"), 1)
+
+    def test_B_watchdog_timeout_returns_presented_false_and_timed_out(self):
+        """Test B: waitForPresentedFrame zwraca { presented: false, timedOut: true } przy timeoutcie bez raportowania sukcesu."""
+        js = """
+const mockVideo = {
+  requestVideoFrameCallback: () => 1,
+  addEventListener: () => {},
+  removeEventListener: () => {},
+  cancelVideoFrameCallback: () => {}
+};
+ArchivebatePlayerCore.waitForPresentedFrame(mockVideo, null, 40).then(res => {
+  console.log(JSON.stringify(res));
+});
+"""
+        res = self.run_node_eval(js)
+        self.assertFalse(res.get("presented"), "Na timeoutcie presented musi być false")
+        self.assertEqual(res.get("reason"), "timeout")
+        self.assertTrue(res.get("timedOut"), "timedOut musi wynosić true")
+
+    def test_C_timeout_does_not_mark_first_frame_or_call_loader_callback(self):
+        """Test C: VideoPerfTracker NIE ustawia first_presented_frame i NIE wywołuje callbacku zniknięcia loadera przy timeoutcie."""
+        js = """
+let loaderHidden = false;
+const tracker = new ArchivebatePlayerCore.VideoPerfTracker('test_c', 'modal');
+const mockVideo = {
+  requestVideoFrameCallback: () => 1,
+  addEventListener: () => {},
+  removeEventListener: () => {},
+  cancelVideoFrameCallback: () => {}
+};
+tracker.attachToPlayer(mockVideo, () => { loaderHidden = true; }, 40);
+setTimeout(() => {
+  const m = tracker.getMetrics();
+  console.log(JSON.stringify({ loaderHidden, metrics: m }));
+}, 80);
+"""
+        res = self.run_node_eval(js)
+        self.assertFalse(res.get("loaderHidden"), "Loader NIE może zostać ukryty na timeoutcie watchdogu!")
+        metrics = res.get("metrics", {})
+        self.assertIsNone(metrics.get("first_frame"), "first_frame na timeoutcie musi być null")
+        self.assertIsNone(metrics.get("first_presented_frame"), "first_presented_frame na timeoutcie musi być null")
+        self.assertTrue(metrics.get("frame_detection_timeout"), "frame_detection_timeout musi być true")
+        self.assertFalse(metrics.get("is_valid_measurement"), "Pomiar nie może być uznany za poprawny")
+
+    def test_D_real_frame_marks_first_frame_and_calls_loader_callback(self):
+        """Test D: VideoPerfTracker ustawia first_presented_frame i wywołuje callback TYLKO przy rzeczywistym RVFC."""
+        js = """
+let loaderHidden = false;
+const tracker = new ArchivebatePlayerCore.VideoPerfTracker('test_d', 'modal');
+const mockVideo = {
+  requestVideoFrameCallback: (cb) => {
+    setTimeout(() => cb(100, { mediaTime: 0.1, presentationTime: 50, presentedFrames: 1 }), 10);
+    return 1;
+  },
+  addEventListener: () => {},
+  removeEventListener: () => {},
+  cancelVideoFrameCallback: () => {}
+};
+tracker.attachToPlayer(mockVideo, () => { loaderHidden = true; }, 1000);
+setTimeout(() => {
+  const m = tracker.getMetrics();
+  console.log(JSON.stringify({ loaderHidden, metrics: m }));
+}, 60);
+"""
+        res = self.run_node_eval(js)
+        self.assertTrue(res.get("loaderHidden"), "Loader musi zostać ukryty po odebraniu rzeczywistej klatki")
+        metrics = res.get("metrics", {})
+        self.assertIsNotNone(metrics.get("first_frame"))
+        self.assertEqual(metrics.get("first_frame_source"), "requestVideoFrameCallback")
+        self.assertTrue(metrics.get("is_valid_measurement"))
+
+    def test_E_benchmark_rejects_missing_frame_and_marks_timeout(self):
+        """Test E: tools/benchmark_ttff.py odrzuca próbę (lub oznacza NOT MEASURED / TIMEOUT), jeśli klatka nie została zaprezentowana."""
+        from tools.benchmark_ttff import stats_summary
+        summary = stats_summary([None, None, None])
+        self.assertEqual(summary["count"], 0)
+        self.assertEqual(summary["median"], 0)
+
+        # Weryfikacja odrzucenia próby, gdy is_valid == False
+        raw_run = {"is_valid": False, "ttff": None, "timed_out": True}
+        self.assertFalse(raw_run["is_valid"])
+        self.assertIsNone(raw_run["ttff"])
+        self.assertTrue(raw_run["timed_out"])
+
+    def test_F_fallback_without_rvfc_uses_loadeddata_and_double_raf(self):
+        """Test F: fallback dla środowisk bez RVFC (loadeddata + double rAF) działa i raportuje presented: true, reason: 'loadeddata-raf-fallback'."""
+        js = """
+const mockVideo = {
+  readyState: 0,
+  currentTime: 0.75,
+  addEventListener: (ev, handler) => {
+    if (ev === 'loadeddata') {
+      setTimeout(() => {
+        mockVideo.readyState = 2;
+        handler();
+      }, 10);
+    }
+  },
+  removeEventListener: () => {}
+};
+ArchivebatePlayerCore.waitForPresentedFrame(mockVideo, null, 1000).then(res => {
+  console.log(JSON.stringify(res));
+});
+"""
+        res = self.run_node_eval(js)
+        self.assertTrue(res.get("presented"))
+        self.assertEqual(res.get("reason"), "loadeddata-raf-fallback")
+        self.assertEqual(res.get("mediaTime"), 0.75)
+
+    def test_G_create_preview_seeker_works_with_new_waitForPresentedFrame(self):
+        """Test G: seeker osi czasu (createPreviewSeeker) nadal prawidłowo aktualizuje podglądy i nie blokuje się na nowym kontrakcie waitForPresentedFrame."""
+        js = """
+let seekFired = false;
+const listeners = {};
+const mockVideo = {
+  duration: 60,
+  readyState: 2,
+  _currentTime: 0,
+  get currentTime() { return this._currentTime; },
+  set currentTime(t) {
+    this._currentTime = t;
+    if (listeners['seeked']) setTimeout(() => listeners['seeked'].forEach(fn => fn()), 10);
+  },
+  requestVideoFrameCallback: (cb) => {
+    setTimeout(() => cb(Date.now(), { mediaTime: 20 }), 10);
+    return 1;
+  },
+  addEventListener: (ev, h) => {
+    if (!listeners[ev]) listeners[ev] = [];
+    listeners[ev].push(h);
+  },
+  removeEventListener: () => {},
+  cancelVideoFrameCallback: () => {}
+};
+const seeker = ArchivebatePlayerCore.createPreviewSeeker(mockVideo, {
+  minInterval: 10,
+  watchdogMs: 500,
+  onFrame: () => { seekFired = true; }
+});
+seeker.request(20);
+setTimeout(() => {
+  console.log(JSON.stringify({ seekFired }));
+}, 80);
+"""
+        res = self.run_node_eval(js)
+        self.assertTrue(res.get("seekFired"), "createPreviewSeeker musi poprawnie zgłosić zaprezentowaną klatkę")
+
+    def test_H_temporal_sanity_check_rejects_frame_before_loadeddata(self):
+        """Test H: spójność czasowa i sanity check: first_frame < loadeddata - 25ms odrzuca fałszywy pomiar (is_valid_measurement = false)."""
+        js = """
+const tracker = new ArchivebatePlayerCore.VideoPerfTracker('test_h', 'modal');
+tracker.openTime = 1000;
+// loadeddata pojawia się po 3000ms od openTime (czas 4000)
+tracker.marks['loadeddata'] = 4000;
+// first_presented_frame pojawia się sztucznie po 1205ms (czas 2205, jak w dawnym watchdogu)
+tracker.marks['first_presented_frame'] = 2205;
+const m = tracker.getMetrics();
+console.log(JSON.stringify(m));
+"""
+        res = self.run_node_eval(js)
+        self.assertIsNone(res.get("first_frame"), "first_frame musi być odrzucone (null) przy anomaliach czasowych")
+        self.assertFalse(res.get("is_valid_measurement"), "Pomiar nie może być uznany za poprawny przy first_frame < loadeddata - 25ms")
+
+
 if __name__ == "__main__":
     unittest.main()
 

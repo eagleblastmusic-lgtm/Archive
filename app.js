@@ -2416,7 +2416,6 @@ async function openVideoModal(video) {
   const hideLoadingPoster = () => {
     if (modalLoaderDismissed) return;
     modalLoaderDismissed = true;
-    modalPerfTracker?.mark('first_presented_frame');
     if (dom.videoLoader) {
       dom.videoLoader.style.opacity = '0';
       setTimeout(() => {
@@ -2439,7 +2438,9 @@ async function openVideoModal(video) {
   if (modalPerfTracker) {
     modalPerfTracker.attachToPlayer(dom.modalVideo, hideLoadingPoster);
   } else if (window.ArchivebatePlayerCore && typeof ArchivebatePlayerCore.waitForPresentedFrame === 'function') {
-    ArchivebatePlayerCore.waitForPresentedFrame(dom.modalVideo).then(hideLoadingPoster);
+    ArchivebatePlayerCore.waitForPresentedFrame(dom.modalVideo).then(res => {
+      if (res && res.presented) hideLoadingPoster();
+    });
   }
 
   // 2. NATYCHMIASTOWE PRZYPISANIE STRUMIENIA MP4 W PLAYERZE (0ms oczekiwania na metadane)
@@ -2511,7 +2512,9 @@ async function openVideoModal(video) {
     dom.modalTimelineContainer.addEventListener('pointerenter', triggerModalStoryboardOnce, { passive: true, once: true });
   }
 
-  dom.modalVideo.onloadeddata = hideLoadingPoster;
+  dom.modalVideo.onloadeddata = () => {
+    modalPerfTracker?.mark('loadeddata');
+  };
   dom.modalVideo.onplaying = () => {
     hideLoadingPoster();
     setTimeout(() => {

@@ -28,37 +28,163 @@
    * została już wysłana do kompozytora. To było źródłem "jednego kadru".
    * requestVideoFrameCallback daje nam faktycznie zaprezentowaną klatkę.
    */
-  function waitForPresentedFrame(video, expectedTime, timeoutMs = 1200) {
-    if (!video) return Promise.resolve();
+  /**
+   * Czeka na faktycznie zaprezentowaną klatkę wideo wysłaną do kompozytora
+   * za pośrednictwem requestVideoFrameCallback (RVFC) lub bezpiecznego fallbacku loadeddata + 2x rAF.
+   * Zwraca obiekt wyniku z jednoznaczną informacją czy klatka została zaprezentowana:
+   * { presented: true, reason: 'requestVideoFrameCallback', mediaTime, presentationTime, presentedFrames }
+   * lub w przypadku timeoutu watchdogu:
+   * { presented: false, reason: 'timeout', timedOut: true }
+   */
+  function waitForPresentedFrame(video, expectedTime, timeoutMs = 8000) {
+    if (!video) {
+      return Promise.resolve({
+        presented: false,
+        reason: 'no-video',
+        timedOut: false
+      });
+    }
+
+    // Obsługa wywołań gdzie timeoutMs był przekazany jako drugi argument
+    if (typeof expectedTime === 'number' && (timeoutMs === undefined || timeoutMs === 8000)) {
+      if (expectedTime > 0 && expectedTime <= 5000) {
+        timeoutMs = expectedTime;
+        expectedTime = null;
+      }
+    }
 
     if (typeof video.requestVideoFrameCallback === 'function') {
       return new Promise(resolve => {
         let finished = false;
         let callbackId = null;
         let timer = null;
-        const finish = () => {
+        let errorHandler = null;
+
+        const finish = (result) => {
           if (finished) return;
           finished = true;
           clearTimeout(timer);
+          if (errorHandler && typeof video.removeEventListener === 'function') {
+            video.removeEventListener('error', errorHandler);
+          }
           if (callbackId !== null && typeof video.cancelVideoFrameCallback === 'function') {
             try { video.cancelVideoFrameCallback(callbackId); } catch (_) {}
           }
-          resolve();
+          resolve(result);
         };
 
-        // Callback rejestrujemy już po `seeked`, więc pierwszy zaprezentowany frame
-        // jest dokładnie tym, na który chcemy czekać. Nie wymagamy idealnego mediaTime:
-        // GOP/keyframe może przesunąć go o kilka klatek.
         try {
-          callbackId = video.requestVideoFrameCallback(() => finish());
-          timer = setTimeout(finish, timeoutMs);
+          callbackId = video.requestVideoFrameCallback((now, metadata) => {
+            finish({
+              presented: true,
+              reason: 'requestVideoFrameCallback',
+              timedOut: false,
+              mediaTime: metadata?.mediaTime ?? (typeof video.currentTime === 'number' ? video.currentTime : null),
+              presentationTime: metadata?.presentationTime ?? null,
+              presentedFrames: metadata?.presentedFrames ?? null,
+              now: now
+            });
+          });
+
+          errorHandler = () => {
+            finish({
+              presented: false,
+              reason: 'video-error',
+              timedOut: false,
+              error: video.error ? { code: video.error.code, message: video.error.message } : null
+            });
+          };
+          video.addEventListener('error', errorHandler, { once: true });
+
+          timer = setTimeout(() => {
+            finish({
+              presented: false,
+              reason: 'timeout',
+              timedOut: true
+            });
+          }, timeoutMs);
         } catch (_) {
-          finish();
+          finish({
+            presented: false,
+            reason: 'exception',
+            timedOut: false
+          });
         }
       });
     }
 
-    return nextAnimationFrame();
+    // Fallback dla przeglądarek bez requestVideoFrameCallback:
+    // Czekamy na loadeddata (klatka zdekodowana w RAM) + double requestAnimationFrame (wypchnięcie do GPU/kompozytora)
+    return new Promise(resolve => {
+      let finished = false;
+      let timer = null;
+      let errorHandler = null;
+      let loadedDataHandler = null;
+
+      const finish = (result) => {
+        if (finished) return;
+        finished = true;
+        clearTimeout(timer);
+        if (errorHandler && typeof video.removeEventListener === 'function') {
+          video.removeEventListener('error', errorHandler);
+        }
+        if (loadedDataHandler && typeof video.removeEventListener === 'function') {
+          video.removeEventListener('loadeddata', loadedDataHandler);
+        }
+        resolve(result);
+      };
+
+      const triggerDoubleRaf = () => {
+        if (typeof requestAnimationFrame === 'function') {
+          requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+              finish({
+                presented: true,
+                reason: 'loadeddata-raf-fallback',
+                timedOut: false,
+                mediaTime: typeof video.currentTime === 'number' ? video.currentTime : null
+              });
+            });
+          });
+        } else {
+          setTimeout(() => {
+            finish({
+              presented: true,
+              reason: 'loadeddata-raf-fallback',
+              timedOut: false,
+              mediaTime: typeof video.currentTime === 'number' ? video.currentTime : null
+            });
+          }, 32);
+        }
+      };
+
+      if (video.readyState >= 2) { // HAVE_CURRENT_DATA
+        triggerDoubleRaf();
+      } else {
+        loadedDataHandler = () => {
+          triggerDoubleRaf();
+        };
+        video.addEventListener('loadeddata', loadedDataHandler, { once: true });
+      }
+
+      errorHandler = () => {
+        finish({
+          presented: false,
+          reason: 'video-error',
+          timedOut: false,
+          error: video.error ? { code: video.error.code, message: video.error.message } : null
+        });
+      };
+      video.addEventListener('error', errorHandler, { once: true });
+
+      timer = setTimeout(() => {
+        finish({
+          presented: false,
+          reason: 'timeout',
+          timedOut: true
+        });
+      }, timeoutMs);
+    });
   }
 
   function createPreviewSeeker(video, options = {}) {
@@ -303,6 +429,9 @@
       this.marks = {};
       this.openTime = performance.now();
       this.reported = false;
+      this.firstFrameSource = null;
+      this.frameDetectionTimeout = false;
+      this.frameMetadata = null;
       this.mark('video_open_start');
       window.__archivebatePerfTracker = this;
     }
@@ -328,6 +457,17 @@
     }
 
     getMetrics() {
+      const firstFrameElapsed = this.getElapsed('first_presented_frame');
+      const loadeddataElapsed = this.getElapsed('loadeddata');
+
+      // Sanity check: klatka nie może pojawić się na długo przed załadowaniem danych wideo (loadeddata)
+      let isValidFrame = true;
+      if (firstFrameElapsed !== null && loadeddataElapsed !== null) {
+        if (firstFrameElapsed < (loadeddataElapsed - 25)) {
+          isValidFrame = false;
+        }
+      }
+
       return {
         videoId: this.videoId,
         mode: this.mode,
@@ -335,8 +475,13 @@
         stream_src: this.getElapsed('stream_src_set'),
         details_ready: this.getElapsed('details_request_end'),
         metadata: this.getElapsed('loadedmetadata'),
-        loadeddata: this.getElapsed('loadeddata'),
-        first_frame: this.getElapsed('first_presented_frame'),
+        loadeddata: loadeddataElapsed,
+        first_frame: (isValidFrame && !this.frameDetectionTimeout) ? firstFrameElapsed : null,
+        first_presented_frame: firstFrameElapsed,
+        first_frame_source: this.firstFrameSource,
+        frame_detection_timeout: this.frameDetectionTimeout,
+        frame_metadata: this.frameMetadata,
+        is_valid_measurement: isValidFrame && !this.frameDetectionTimeout && (firstFrameElapsed !== null),
         playing: this.getElapsed('playing'),
         storyboard_start: this.getElapsed('storyboard_start'),
         storyboard_quick_ready: this.getElapsed('storyboard_quick_ready'),
@@ -344,7 +489,7 @@
       };
     }
 
-    attachToPlayer(video, onFirstFrameCallback) {
+    attachToPlayer(video, onFirstFrameCallback, timeoutMs = 8000) {
       if (!video) return;
 
       video.addEventListener('loadedmetadata', () => {
@@ -364,22 +509,45 @@
         this.report();
       }, { once: true });
 
-      waitForPresentedFrame(video).then(() => {
-        this.mark('first_presented_frame');
-        if (typeof onFirstFrameCallback === 'function') {
-          onFirstFrameCallback();
-        }
+      video.addEventListener('error', () => {
+        this.mark('video_error');
         this.report();
+      }, { once: true });
+
+      waitForPresentedFrame(video, undefined, timeoutMs).then(result => {
+        if (result && result.presented) {
+          this.mark('first_presented_frame');
+          this.firstFrameSource = result.reason;
+          this.frameMetadata = {
+            mediaTime: result.mediaTime,
+            presentationTime: result.presentationTime,
+            presentedFrames: result.presentedFrames
+          };
+          if (typeof onFirstFrameCallback === 'function') {
+            onFirstFrameCallback(result);
+          }
+          this.report();
+        } else {
+          this.frameDetectionTimeout = true;
+          this.mark('frame_detection_timeout');
+          // Ważne: przy timeoutcie NIE markujemy first_presented_frame
+          // i NIE wywołujemy onFirstFrameCallback (loader nie znika na timeoutcie)!
+          this.report();
+        }
       });
     }
 
     report() {
       if (this.reported) return;
-      // Raportujemy gdy mamy zaprezentowaną pierwszą klatkę lub stan playing
-      if (!this.marks['first_presented_frame'] && !this.marks['playing']) return;
+      // Raportujemy gdy mamy zaprezentowaną pierwszą klatkę, stan playing lub timeout
+      if (!this.marks['first_presented_frame'] && !this.marks['playing'] && !this.frameDetectionTimeout) return;
       this.reported = true;
 
       if (localStorage.getItem('archivebate_debug_perf') !== '1') return;
+
+      const firstFrameDisplay = this.getElapsed('first_presented_frame') !== null
+        ? `${this.getElapsed('first_presented_frame')} ms`
+        : (this.frameDetectionTimeout ? 'TIMEOUT (frame detection failed)' : '-');
 
       const lines = [
         `\n[VIDEO PERF]`,
@@ -391,12 +559,17 @@
         `open → details ready: ${this.getElapsed('details_request_end') ?? '-'} ms`,
         `open → metadata: ${this.getElapsed('loadedmetadata') ?? '-'} ms`,
         `open → loadeddata: ${this.getElapsed('loadeddata') ?? '-'} ms`,
-        `open → FIRST FRAME: ${this.getElapsed('first_presented_frame') ?? '-'} ms`,
+        `open → FIRST PRESENTED FRAME: ${firstFrameDisplay}`,
+        `first frame source: ${this.firstFrameSource || (this.frameDetectionTimeout ? 'null (detection timeout)' : '-')}`,
         `open → playing: ${this.getElapsed('playing') ?? '-'} ms`,
+        `frame detection timeout: ${this.frameDetectionTimeout}`,
         ``,
         `storyboard start: ${this.getElapsed('storyboard_start') !== null ? this.getElapsed('storyboard_start') + ' ms' : 'deferred'}`,
         `quick storyboard ready: ${this.getElapsed('storyboard_quick_ready') !== null ? this.getElapsed('storyboard_quick_ready') + ' ms' : 'deferred'}`
       ];
+      if (this.frameMetadata) {
+        lines.push(`frame metadata: mediaTime=${this.frameMetadata.mediaTime}s, presTime=${this.frameMetadata.presentationTime}ms, frames=${this.frameMetadata.presentedFrames}`);
+      }
 
       console.log(lines.join('\n'));
     }
