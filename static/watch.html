@@ -509,16 +509,16 @@
   <script src="/static/player-core.js?v=2.2"></script>
   <script src="/static/youtube-storyboard.js?v=2.0"></script>
   <script>
-    const perfStart = performance.now();
-    const isDebugPerf = localStorage.getItem('archivebate_debug_perf') === '1';
+    const videoId = window.location.pathname.split('/').filter(Boolean).pop();
+    const perfTracker = (window.ArchivebatePlayerCore && window.ArchivebatePlayerCore.VideoPerfTracker)
+      ? new ArchivebatePlayerCore.VideoPerfTracker(videoId, '/watch')
+      : null;
     function logPerf(label) {
-      if (isDebugPerf) {
-        const elapsed = Math.round(performance.now() - perfStart);
+      if (localStorage.getItem('archivebate_debug_perf') === '1') {
+        const elapsed = perfTracker ? perfTracker.getElapsed('first_presented_frame') || Math.round(performance.now() - perfTracker.openTime) : 0;
         console.log(`[Perf Watch ${videoId}] ${label}: +${elapsed}ms`);
       }
     }
-
-    const videoId = window.location.pathname.split('/').filter(Boolean).pop();
     const durationHint = Number(new URLSearchParams(window.location.search).get('duration') || 0);
     const playerBox = document.getElementById('playerBox');
     const player = document.getElementById('mainPlayer');
@@ -793,6 +793,7 @@
       if (!duration || duration <= 0) return;
       if (spriteBoard || spriteAbort) return;
 
+      perfTracker?.mark('storyboard_start');
       const controller = new AbortController();
       spriteAbort = controller;
       const expectedId = String(videoId);
@@ -815,6 +816,7 @@
       }).then(board => {
         if (controller.signal.aborted || String(videoId) !== expectedId) return;
         spriteBoard = board;
+        perfTracker?.mark('storyboard_quick_ready');
         if (timelinePreviewStatus) timelinePreviewStatus.style.display = 'none';
       }).catch(err => {
         if (err?.name === 'AbortError') return;
@@ -844,6 +846,14 @@
         if (raw) bootstrap = JSON.parse(raw);
       } catch (_) {}
 
+      if (bootstrap?.direct_url || bootstrap?.has_details) {
+        perfTracker?.setCacheType('warm');
+      } else if (bootstrap) {
+        perfTracker?.setCacheType('prefetch');
+      } else {
+        perfTracker?.setCacheType('cold');
+      }
+
       if (bootstrap) {
         document.title = `${bootstrap.username || 'Wideo'} — Archivebate Player`;
         modelNameText.innerText = bootstrap.username || 'Model';
@@ -865,10 +875,13 @@
       // 2. BŁYSKAWICZNE PRZYPISANIE STRUMIENIA MP4 - BEZ CZEKANIA NA ZAPYTANIE O DETALE!
       const streamUrl = `/api/video/stream?id=${encodeURIComponent(videoId)}`;
       player.src = streamUrl;
+      perfTracker?.mark('stream_src_set');
       logPerf('player.src assigned');
 
       // Precyzyjne wykrywanie pierwszej wyrenderowanej klatki
-      if (window.ArchivebatePlayerCore && typeof ArchivebatePlayerCore.waitForPresentedFrame === 'function') {
+      if (perfTracker) {
+        perfTracker.attachToPlayer(player, hideWatchLoader);
+      } else if (window.ArchivebatePlayerCore && typeof ArchivebatePlayerCore.waitForPresentedFrame === 'function') {
         ArchivebatePlayerCore.waitForPresentedFrame(player).then(hideWatchLoader);
       }
       player.addEventListener('loadeddata', () => {
@@ -901,8 +914,10 @@
       player.play().catch(() => {});
 
       // 3. Równoległe pobieranie pełnych metadanych w tle
+      perfTracker?.mark('details_request_start');
       try {
         const data = await ArchivebateAPI.getJSON(`/api/video/details?id=${encodeURIComponent(videoId)}`, { timeoutMs: 12000 });
+        perfTracker?.mark('details_request_end');
         currentDetails = data;
         logPerf('details received');
 

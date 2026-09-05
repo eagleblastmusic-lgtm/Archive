@@ -7,7 +7,7 @@ import logging
 import functools
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 from client import ArchivebateSession
 from storage import storage
 from cache_store import BoundedTTLCache
@@ -232,6 +232,7 @@ class ArchivebateScraper:
         self._cache = BoundedTTLCache(max_items=300, default_ttl=600.0)
         self._home_cache = BoundedTTLCache(max_items=50, default_ttl=60.0)
         self._details_cache = BoundedTTLCache(max_items=500, default_ttl=3600.0)
+        self._cw_model_cache = BoundedTTLCache(max_items=200, default_ttl=900.0)
 
     def parse_video_card(self, section_html: str) -> Optional[Dict[str, Any]]:
         """Parsuje pojedynczy kafelek wideo z plakatami JPG oraz wideo podglądu MP4."""
@@ -537,23 +538,24 @@ class ArchivebateScraper:
             self._home_cache[cache_key] = {"data": result, "time": now}
         return result
 
-    def get_model_videos(self, username: str, page: int = 1) -> List[Dict[str, Any]]:
-        """Pobiera filmy konkretnej modelki (zoptymalizowane, z pamięcią podręczną)."""
-        cache_key = f"model:{username}:{page}"
-        now = time.time()
-        if cache_key in self._cache:
-            entry = self._cache[cache_key]
-            if now - entry["time"] < 300:
-                return entry["data"]
+    def get_model_page(self, username: str, page: int = 1) -> Dict[str, Any]:
+        """Pobiera filmy konkretnej modelki dla danej strony z precyzyjną paginacją i bez powtórzeń między stronami."""
+        cache_key = f"model_page:{username.lower()}:{page}"
+        cached = self._cache.get(cache_key)
+        if cached is not None:
+            return cached
 
-        all_videos = []
+        PAGE_SIZE = 20
 
-        def _fetch_page(p):
+        def _fetch_ab(p: int) -> Tuple[List[Dict[str, Any]], Optional[int]]:
             url = f"https://archivebate.com/profile/{username}?page={p}"
+            vids: List[Dict[str, Any]] = []
+            total_found: Optional[int] = None
             try:
-                r = self.session.session.get(url, timeout=4)
+                r = self.session.session.get(url, timeout=5)
                 html = r.text
                 self._sync_csrf(html, url)
+                rendered_html = None
                 for m in re.finditer(r'wire:id="([^"]+)" wire:initial-data="([^"]+)"', html):
                     raw_data = m.group(2).replace('&quot;', '"')
                     data = json.loads(raw_data)
@@ -562,36 +564,87 @@ class ArchivebateScraper:
                         rendered_html = self.session.call_livewire(name, data['fingerprint'], data['serverMemo'], "load_profile_videos")
                         if rendered_html:
                             sections = re.findall(r'<section class="video_item">.*?</section>', rendered_html, re.DOTALL)
-                            vids = []
                             for sec in sections:
                                 v = self.parse_video_card(sec)
                                 if v:
                                     if v["username"] == "Model":
                                         v["username"] = username
                                     vids.append(v)
-                            return vids
-                sections = re.findall(r'<section class="video_item">.*?</section>', html, re.DOTALL)
-                return [self.parse_video_card(s) for s in sections if self.parse_video_card(s)]
-            except Exception:
-                return []
+                            break
+                if not vids:
+                    sections = re.findall(r'<section class="video_item">.*?</section>', html, re.DOTALL)
+                    for sec in sections:
+                        v = self.parse_video_card(sec)
+                        if v:
+                            if v["username"] == "Model":
+                                v["username"] = username
+                            vids.append(v)
 
-        # Równolegle: strona Archivebate + filmy Camwhores
+                target_html = rendered_html or html
+                m_total = re.search(r'of\s*<span[^>]*class="[^"]*fw-semibold[^"]*"[^>]*>\s*([\d,]+)\s*</span>\s*results', target_html, re.IGNORECASE)
+                if not m_total:
+                    m_total = re.search(r'of\s*<span[^>]*>\s*([\d,]+)\s*</span>\s*results', target_html, re.IGNORECASE)
+                if m_total:
+                    total_found = int(m_total.group(1).replace(',', ''))
+            except Exception as e:
+                logger.error(f"Błąd pobierania strony modelki {username} (strona {p}): {e}")
+            return vids, total_found
+
+        from camwhores import camwhores_scraper, merge_and_deduplicate
+        cw_model_vids = self._cw_model_cache.get(username.lower())
+
         with ThreadPoolExecutor(max_workers=2) as executor:
-            f_ab = executor.submit(_fetch_page, page)
-            from camwhores import camwhores_scraper, merge_and_deduplicate
-            f_cw = executor.submit(camwhores_scraper.search_videos, username)
+            f_ab = executor.submit(_fetch_ab, page)
+            f_cw = None
+            if cw_model_vids is None:
+                f_cw = executor.submit(camwhores_scraper.search_videos, username)
 
-            try: all_videos.extend(f_ab.result(timeout=5))
-            except Exception: pass
             try:
-                cw_vids = f_cw.result(timeout=4)
-                cw_model_vids = [v for v in cw_vids if v.get("username", "").lower() == username.lower()]
-                all_videos = merge_and_deduplicate(all_videos, cw_model_vids)
-            except Exception: pass
+                ab_vids, total_ab = f_ab.result(timeout=6)
+            except Exception:
+                ab_vids, total_ab = [], None
 
-        sorted_vids = sort_videos_newest_first(all_videos)
-        self._cache[cache_key] = {"data": sorted_vids, "time": now}
-        return sorted_vids
+            if f_cw is not None:
+                try:
+                    raw_cw = f_cw.result(timeout=5)
+                    cw_model_vids = [v for v in (raw_cw or []) if v.get("username", "").lower() == username.lower()]
+                    self._cw_model_cache.set(username.lower(), cw_model_vids, ttl=900.0)
+                except Exception:
+                    cw_model_vids = []
+            elif cw_model_vids is None:
+                cw_model_vids = []
+
+        # Paginacja filmów Camwhores - bierzemy tylko wycinek dla danej strony, aby filmy nie dublowały się na kolejnych stronach
+        cw_start = (page - 1) * PAGE_SIZE
+        cw_slice = cw_model_vids[cw_start : cw_start + PAGE_SIZE]
+
+        # Obliczanie rzeczywistej liczby stron (last_page) i całkowitej liczby filmów
+        if total_ab is not None:
+            ab_pages = math.ceil(total_ab / PAGE_SIZE) if total_ab > 0 else 1
+        else:
+            ab_pages = (page + 1) if len(ab_vids) == PAGE_SIZE else max(page, 1)
+
+        cw_pages = math.ceil(len(cw_model_vids) / PAGE_SIZE) if len(cw_model_vids) > 0 else 1
+        last_page = max(ab_pages, cw_pages, 1)
+
+        total_videos = (total_ab if total_ab is not None else len(ab_vids)) + len(cw_model_vids)
+
+        merged = merge_and_deduplicate(ab_vids, cw_slice)
+        sorted_vids = sort_videos_newest_first(merged)
+
+        page_result = {
+            "username": username,
+            "page": page,
+            "last_page": last_page,
+            "total_videos": total_videos,
+            "videos": sorted_vids
+        }
+        self._cache.set(cache_key, page_result, ttl=300.0)
+        return page_result
+
+    def get_model_videos(self, username: str, page: int = 1) -> List[Dict[str, Any]]:
+        """Pobiera filmy konkretnej modelki (kompatybilność wsteczna)."""
+        return self.get_model_page(username=username, page=page).get("videos", [])
 
 
     def _fetch_search_profiles(self, clean_q: str) -> List[Dict[str, Any]]:

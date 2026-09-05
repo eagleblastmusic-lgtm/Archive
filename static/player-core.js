@@ -295,6 +295,113 @@
     return reset;
   }
 
+  class VideoPerfTracker {
+    constructor(videoId, mode = 'modal') {
+      this.videoId = String(videoId || 'unknown');
+      this.mode = mode; // '/watch' or 'modal'
+      this.cacheType = 'unknown'; // 'cold', 'warm', 'prefetch'
+      this.marks = {};
+      this.openTime = performance.now();
+      this.reported = false;
+      this.mark('video_open_start');
+      window.__archivebatePerfTracker = this;
+    }
+
+    mark(name) {
+      if (!this.marks[name]) {
+        this.marks[name] = performance.now();
+      }
+      try {
+        if (typeof performance.mark === 'function') {
+          performance.mark(`archivebate:${this.videoId}:${name}`);
+        }
+      } catch (_) {}
+    }
+
+    setCacheType(type) {
+      this.cacheType = type;
+    }
+
+    getElapsed(name) {
+      if (!this.marks[name]) return null;
+      return Math.round(this.marks[name] - this.openTime);
+    }
+
+    getMetrics() {
+      return {
+        videoId: this.videoId,
+        mode: this.mode,
+        cache: this.cacheType,
+        stream_src: this.getElapsed('stream_src_set'),
+        details_ready: this.getElapsed('details_request_end'),
+        metadata: this.getElapsed('loadedmetadata'),
+        loadeddata: this.getElapsed('loadeddata'),
+        first_frame: this.getElapsed('first_presented_frame'),
+        playing: this.getElapsed('playing'),
+        storyboard_start: this.getElapsed('storyboard_start'),
+        storyboard_quick_ready: this.getElapsed('storyboard_quick_ready'),
+        reported: this.reported
+      };
+    }
+
+    attachToPlayer(video, onFirstFrameCallback) {
+      if (!video) return;
+
+      video.addEventListener('loadedmetadata', () => {
+        this.mark('loadedmetadata');
+      }, { once: true });
+
+      video.addEventListener('loadeddata', () => {
+        this.mark('loadeddata');
+      }, { once: true });
+
+      video.addEventListener('canplay', () => {
+        this.mark('canplay');
+      }, { once: true });
+
+      video.addEventListener('playing', () => {
+        this.mark('playing');
+        this.report();
+      }, { once: true });
+
+      waitForPresentedFrame(video).then(() => {
+        this.mark('first_presented_frame');
+        if (typeof onFirstFrameCallback === 'function') {
+          onFirstFrameCallback();
+        }
+        this.report();
+      });
+    }
+
+    report() {
+      if (this.reported) return;
+      // Raportujemy gdy mamy zaprezentowaną pierwszą klatkę lub stan playing
+      if (!this.marks['first_presented_frame'] && !this.marks['playing']) return;
+      this.reported = true;
+
+      if (localStorage.getItem('archivebate_debug_perf') !== '1') return;
+
+      const lines = [
+        `\n[VIDEO PERF]`,
+        `video: ${this.videoId}`,
+        `mode: ${this.mode}`,
+        `cache: ${this.cacheType}`,
+        ``,
+        `open → stream src: ${this.getElapsed('stream_src_set') ?? '-'} ms`,
+        `open → details ready: ${this.getElapsed('details_request_end') ?? '-'} ms`,
+        `open → metadata: ${this.getElapsed('loadedmetadata') ?? '-'} ms`,
+        `open → loadeddata: ${this.getElapsed('loadeddata') ?? '-'} ms`,
+        `open → FIRST FRAME: ${this.getElapsed('first_presented_frame') ?? '-'} ms`,
+        `open → playing: ${this.getElapsed('playing') ?? '-'} ms`,
+        ``,
+        `storyboard start: ${this.getElapsed('storyboard_start') !== null ? this.getElapsed('storyboard_start') + ' ms' : 'deferred'}`,
+        `quick storyboard ready: ${this.getElapsed('storyboard_quick_ready') !== null ? this.getElapsed('storyboard_quick_ready') + ' ms' : 'deferred'}`
+      ];
+
+      console.log(lines.join('\n'));
+    }
+  }
+
   window.ArchivebatePlayerCore = {
     clamp,
     ratioFromPointer,
@@ -307,6 +414,7 @@
     setupVolumeControls,
     setupSpeedToggle,
     setupFullscreenToggle,
-    setupIdleTimer
+    setupIdleTimer,
+    VideoPerfTracker
   };
 })();

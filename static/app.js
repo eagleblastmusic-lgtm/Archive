@@ -1719,7 +1719,6 @@ async function loadModelVideos(username, page = 1) {
   state.mode = 'model';
   state.currentModel = username;
   state.currentPage = page;
-  state.lastPage = 20;
 
   showSkeletons();
   dom.accountPanelView.style.display = 'none';
@@ -1736,13 +1735,20 @@ async function loadModelVideos(username, page = 1) {
     const data = await ArchivebateAPI.getJSON(`/api/model/${encodeURIComponent(username)}?page=${page}`, { timeoutMs: 15000 });
     state.videos = data.videos || [];
 
+    if (data.last_page) {
+      state.lastPage = Math.max(1, Number(data.last_page) || 1);
+    } else if (state.videos.length === 0 && page > 1) {
+      state.lastPage = page - 1;
+    } else if (!state.lastPage) {
+      state.lastPage = 1;
+    }
+
     renderVideoGrid(state.videos);
     scheduleThumbnailWarmup(state.videos);
-    dom.videoCount.innerText = `${state.videos.length} na stronie • Modelka: ${username} • 5.5M+ w serwisach`;
+    const totalCount = Number(data.total_videos) || state.videos.length;
+    const totalStr = totalCount > 0 ? ` • Łącznie: ${totalCount.toLocaleString('pl-PL')} filmów` : '';
+    dom.videoCount.innerText = `${state.videos.length} na stronie${totalStr} • Modelka: ${username} • 5.5M+ w serwisach`;
     
-    if (state.videos.length === 0 && page > 1) {
-      state.lastPage = page - 1;
-    }
     renderPagination();
     prefetchNextPage();
   } catch (e) {
@@ -2113,7 +2119,12 @@ function createVideoCard(v, idx) {
       if (window.ArchivebateYouTubeStoryboard && v.id) {
         const durSec = parseDurationToSeconds(v.duration);
         if (durSec > 0) {
-          ArchivebateYouTubeStoryboard.warm({ videoId: v.id, duration: durSec });
+          clearTimeout(storyboardWarmTimer);
+          storyboardWarmTimer = setTimeout(() => {
+            if (isHovered) {
+              ArchivebateYouTubeStoryboard.warm({ videoId: v.id, duration: durSec });
+            }
+          }, 1500);
         }
       }
     }
@@ -2393,23 +2404,19 @@ async function openVideoModal(video) {
     } catch (_) {}
   }
 
-  // 2. NATYCHMIASTOWE PRZYPISANIE STRUMIENIA MP4 W PLAYERZE (0ms oczekiwania na metadane)
-  const streamSource = (video && video.id)
-    ? `/api/video/stream?id=${encodeURIComponent(video.id)}`
-    : (video?.proxy_stream_url || video?.direct_url || '');
-
-  if (streamSource) {
-    dom.modalVideo.src = streamSource;
+  let modalPerfTracker = null;
+  if (window.ArchivebatePlayerCore?.VideoPerfTracker && video?.id) {
+    modalPerfTracker = new ArchivebatePlayerCore.VideoPerfTracker(video.id, 'modal');
+    const isWarm = videoDetailsCache.has(video.id);
+    const isPrefetched = !!(video._prefetched || video.direct_url || (video.id && videoDetailsInflight.has(video.id)));
+    modalPerfTracker.setCacheType(isWarm ? 'warm' : (isPrefetched ? 'prefetch' : 'cold'));
   }
-
-  if (dom.modalTimelineProgress) dom.modalTimelineProgress.style.width = '0%';
-  if (dom.modalTimelineThumb) dom.modalTimelineThumb.style.left = '0%';
-  if (dom.modalTimelineBuffer) dom.modalTimelineBuffer.style.width = '0%';
 
   let modalLoaderDismissed = false;
   const hideLoadingPoster = () => {
     if (modalLoaderDismissed) return;
     modalLoaderDismissed = true;
+    modalPerfTracker?.mark('first_presented_frame');
     if (dom.videoLoader) {
       dom.videoLoader.style.opacity = '0';
       setTimeout(() => {
@@ -2428,6 +2435,27 @@ async function openVideoModal(video) {
     }
   };
 
+  // Precyzyjne wykrywanie pierwszej wyrenderowanej klatki
+  if (modalPerfTracker) {
+    modalPerfTracker.attachToPlayer(dom.modalVideo, hideLoadingPoster);
+  } else if (window.ArchivebatePlayerCore && typeof ArchivebatePlayerCore.waitForPresentedFrame === 'function') {
+    ArchivebatePlayerCore.waitForPresentedFrame(dom.modalVideo).then(hideLoadingPoster);
+  }
+
+  // 2. NATYCHMIASTOWE PRZYPISANIE STRUMIENIA MP4 W PLAYERZE (0ms oczekiwania na metadane)
+  const streamSource = (video && video.id)
+    ? `/api/video/stream?id=${encodeURIComponent(video.id)}`
+    : (video?.proxy_stream_url || video?.direct_url || '');
+
+  if (streamSource) {
+    dom.modalVideo.src = streamSource;
+    modalPerfTracker?.mark('stream_src_set');
+  }
+
+  if (dom.modalTimelineProgress) dom.modalTimelineProgress.style.width = '0%';
+  if (dom.modalTimelineThumb) dom.modalTimelineThumb.style.left = '0%';
+  if (dom.modalTimelineBuffer) dom.modalTimelineBuffer.style.width = '0%';
+
   const prepareYoutubeStoryboard = (dur) => {
     const isCamwhores = !!state.currentTimelinePrefix;
     if (isCamwhores || !video?.id || !window.ArchivebateYouTubeStoryboard) return;
@@ -2435,6 +2463,7 @@ async function openVideoModal(video) {
     if (!duration || duration <= 0) return;
     if (state.timelineSpriteBoard || state.timelineSpriteAbort) return;
 
+    modalPerfTracker?.mark('storyboard_start');
     const controller = new AbortController();
     state.timelineSpriteAbort = controller;
     const expectedId = String(video.id);
@@ -2457,6 +2486,7 @@ async function openVideoModal(video) {
     }).then(board => {
       if (controller.signal.aborted || String(state.currentVideoDetails?.id || '') !== expectedId) return;
       state.timelineSpriteBoard = board;
+      modalPerfTracker?.mark('storyboard_quick_ready');
       if (dom.modalTimelinePreviewStatus) dom.modalTimelinePreviewStatus.style.display = 'none';
     }).catch(err => {
       if (err?.name === 'AbortError') return;
@@ -2481,10 +2511,6 @@ async function openVideoModal(video) {
     dom.modalTimelineContainer.addEventListener('pointerenter', triggerModalStoryboardOnce, { passive: true, once: true });
   }
 
-  // Precyzyjne wykrywanie pierwszej wyrenderowanej klatki
-  if (window.ArchivebatePlayerCore && typeof ArchivebatePlayerCore.waitForPresentedFrame === 'function') {
-    ArchivebatePlayerCore.waitForPresentedFrame(dom.modalVideo).then(hideLoadingPoster);
-  }
   dom.modalVideo.onloadeddata = hideLoadingPoster;
   dom.modalVideo.onplaying = () => {
     hideLoadingPoster();
@@ -2506,6 +2532,7 @@ async function openVideoModal(video) {
   dom.modalVideo.play().catch(() => {});
 
   // 3. RÓWNOLEGŁE POBIERANIE METADANYCH W TLE
+  modalPerfTracker?.mark('details_request_start');
   try {
     let details = (video && video.id) ? videoDetailsCache.get(video.id) : null;
     if (!details || (!details.proxy_stream_url && !details.direct_url)) {
@@ -2514,6 +2541,7 @@ async function openVideoModal(video) {
         videoDetailsCache.set(video.id, details);
       }
     }
+    modalPerfTracker?.mark('details_request_end');
     state.currentVideoDetails = { ...video, ...details };
 
     updateModalFavButton(!!details.is_favorite);

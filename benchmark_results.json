@@ -1,0 +1,992 @@
+{
+  "Archivebate Cold (/watch)": {
+    "ttff": {
+      "median": 1205,
+      "min": 1205,
+      "max": 1205,
+      "stddev": 0.0,
+      "count": 3
+    },
+    "ttfb": {
+      "median": 1204,
+      "min": 1203,
+      "max": 2409,
+      "stddev": 696.0,
+      "count": 3
+    },
+    "metadata": {
+      "median": 2416,
+      "min": 2339,
+      "max": 3624,
+      "stddev": 720.7,
+      "count": 3
+    },
+    "loadeddata": {
+      "median": 2472,
+      "min": 2369,
+      "max": 3731,
+      "stddev": 758.4,
+      "count": 3
+    },
+    "playing": {
+      "median": 2473,
+      "min": 2370,
+      "max": 3731,
+      "stddev": 757.8,
+      "count": 3
+    },
+    "stream_src": {
+      "median": 2,
+      "min": 2,
+      "max": 4,
+      "stddev": 1.2,
+      "count": 3
+    },
+    "runs": [
+      {
+        "metrics": {
+          "videoId": "16440393",
+          "mode": "/watch",
+          "cache": "cold",
+          "stream_src": 4,
+          "details_ready": 1629,
+          "metadata": 3624,
+          "loadeddata": 3731,
+          "first_frame": 1205,
+          "playing": 3731,
+          "storyboard_start": null,
+          "storyboard_quick_ready": null,
+          "reported": true
+        },
+        "timing": {
+          "startTime": 178,
+          "requestStart": 179,
+          "responseStart": 2588,
+          "ttfb": 2409
+        },
+        "ttff": 1205,
+        "ttfb": 2409,
+        "stream_src": 4,
+        "metadata": 3624,
+        "loadeddata": 3731,
+        "playing": 3731
+      },
+      {
+        "metrics": {
+          "videoId": "16440393",
+          "mode": "/watch",
+          "cache": "cold",
+          "stream_src": 2,
+          "details_ready": 402,
+          "metadata": 2416,
+          "loadeddata": 2472,
+          "first_frame": 1205,
+          "playing": 2473,
+          "storyboard_start": null,
+          "storyboard_quick_ready": null,
+          "reported": true
+        },
+        "timing": {
+          "startTime": 51,
+          "requestStart": 52,
+          "responseStart": 1255,
+          "ttfb": 1204
+        },
+        "ttff": 1205,
+        "ttfb": 1204,
+        "stream_src": 2,
+        "metadata": 2416,
+        "loadeddata": 2472,
+        "playing": 2473
+      },
+      {
+        "metrics": {
+          "videoId": "16440393",
+          "mode": "/watch",
+          "cache": "cold",
+          "stream_src": 2,
+          "details_ready": 428,
+          "metadata": 2339,
+          "loadeddata": 2369,
+          "first_frame": 1205,
+          "playing": 2370,
+          "storyboard_start": null,
+          "storyboard_quick_ready": null,
+          "reported": true
+        },
+        "timing": {
+          "startTime": 72,
+          "requestStart": 73,
+          "responseStart": 1275,
+          "ttfb": 1203
+        },
+        "ttff": 1205,
+        "ttfb": 1203,
+        "stream_src": 2,
+        "metadata": 2339,
+        "loadeddata": 2369,
+        "playing": 2370
+      }
+    ]
+  },
+  "Archivebate Warm (/watch)": {
+    "ttff": {
+      "median": 1206,
+      "min": 1205,
+      "max": 1207,
+      "stddev": 1.0,
+      "count": 3
+    },
+    "ttfb": {
+      "median": 787,
+      "min": 781,
+      "max": 796,
+      "stddev": 7.5,
+      "count": 3
+    },
+    "metadata": {
+      "median": 1906,
+      "min": 1885,
+      "max": 1945,
+      "stddev": 30.4,
+      "count": 3
+    },
+    "loadeddata": {
+      "median": 1962,
+      "min": 1928,
+      "max": 1982,
+      "stddev": 27.3,
+      "count": 3
+    },
+    "playing": {
+      "median": 1963,
+      "min": 1929,
+      "max": 1983,
+      "stddev": 27.3,
+      "count": 3
+    },
+    "stream_src": {
+      "median": 2,
+      "min": 1,
+      "max": 2,
+      "stddev": 0.6,
+      "count": 3
+    },
+    "runs": [
+      {
+        "metrics": {
+          "videoId": "16440393",
+          "mode": "/watch",
+          "cache": "cold",
+          "stream_src": 2,
+          "details_ready": 9,
+          "metadata": 1906,
+          "loadeddata": 1962,
+          "first_frame": 1207,
+          "playing": 1963,
+          "storyboard_start": null,
+          "storyboard_quick_ready": null,
+          "reported": true
+        },
+        "timing": {
+          "startTime": 50,
+          "requestStart": 51,
+          "responseStart": 831,
+          "ttfb": 781
+        },
+        "ttff": 1207,
+        "ttfb": 781,
+        "stream_src": 2,
+        "metadata": 1906,
+        "loadeddata": 1962,
+        "playing": 1963
+      },
+      {
+        "metrics": {
+          "videoId": "16440393",
+          "mode": "/watch",
+          "cache": "cold",
+          "stream_src": 1,
+          "details_ready": 30,
+          "metadata": 1945,
+          "loadeddata": 1982,
+          "first_frame": 1205,
+          "playing": 1983,
+          "storyboard_start": null,
+          "storyboard_quick_ready": null,
+          "reported": true
+        },
+        "timing": {
+          "startTime": 28,
+          "requestStart": 29,
+          "responseStart": 815,
+          "ttfb": 787
+        },
+        "ttff": 1205,
+        "ttfb": 787,
+        "stream_src": 1,
+        "metadata": 1945,
+        "loadeddata": 1982,
+        "playing": 1983
+      },
+      {
+        "metrics": {
+          "videoId": "16440393",
+          "mode": "/watch",
+          "cache": "cold",
+          "stream_src": 2,
+          "details_ready": 30,
+          "metadata": 1885,
+          "loadeddata": 1928,
+          "first_frame": 1206,
+          "playing": 1929,
+          "storyboard_start": null,
+          "storyboard_quick_ready": null,
+          "reported": true
+        },
+        "timing": {
+          "startTime": 30,
+          "requestStart": 30,
+          "responseStart": 826,
+          "ttfb": 796
+        },
+        "ttff": 1206,
+        "ttfb": 796,
+        "stream_src": 2,
+        "metadata": 1885,
+        "loadeddata": 1928,
+        "playing": 1929
+      }
+    ]
+  },
+  "Archivebate Cold (Modal)": {
+    "ttff": {
+      "median": 1204,
+      "min": 1202,
+      "max": 1213,
+      "stddev": 5.9,
+      "count": 3
+    },
+    "ttfb": {
+      "median": 0,
+      "min": 0,
+      "max": 0,
+      "stddev": 0,
+      "count": 0
+    },
+    "metadata": {
+      "median": 0,
+      "min": 0,
+      "max": 0,
+      "stddev": 0,
+      "count": 0
+    },
+    "loadeddata": {
+      "median": 0,
+      "min": 0,
+      "max": 0,
+      "stddev": 0,
+      "count": 0
+    },
+    "playing": {
+      "median": 0,
+      "min": 0,
+      "max": 0,
+      "stddev": 0,
+      "count": 0
+    },
+    "stream_src": {
+      "median": 0,
+      "min": 0,
+      "max": 0,
+      "stddev": 0,
+      "count": 0
+    },
+    "runs": [
+      {
+        "metrics": {
+          "videoId": "16440393",
+          "mode": "modal",
+          "cache": "prefetch",
+          "stream_src": 0,
+          "details_ready": 413,
+          "metadata": null,
+          "loadeddata": null,
+          "first_frame": 1204,
+          "playing": null,
+          "storyboard_start": null,
+          "storyboard_quick_ready": null,
+          "reported": true
+        },
+        "timing": null,
+        "ttff": 1204,
+        "ttfb": null,
+        "stream_src": 0,
+        "metadata": 0,
+        "loadeddata": 0,
+        "playing": 0
+      },
+      {
+        "metrics": {
+          "videoId": "16440393",
+          "mode": "modal",
+          "cache": "prefetch",
+          "stream_src": 0,
+          "details_ready": 433,
+          "metadata": null,
+          "loadeddata": null,
+          "first_frame": 1202,
+          "playing": null,
+          "storyboard_start": null,
+          "storyboard_quick_ready": null,
+          "reported": true
+        },
+        "timing": null,
+        "ttff": 1202,
+        "ttfb": null,
+        "stream_src": 0,
+        "metadata": 0,
+        "loadeddata": 0,
+        "playing": 0
+      },
+      {
+        "metrics": {
+          "videoId": "16440393",
+          "mode": "modal",
+          "cache": "prefetch",
+          "stream_src": 0,
+          "details_ready": 392,
+          "metadata": null,
+          "loadeddata": null,
+          "first_frame": 1213,
+          "playing": null,
+          "storyboard_start": null,
+          "storyboard_quick_ready": null,
+          "reported": true
+        },
+        "timing": null,
+        "ttff": 1213,
+        "ttfb": null,
+        "stream_src": 0,
+        "metadata": 0,
+        "loadeddata": 0,
+        "playing": 0
+      }
+    ]
+  },
+  "Archivebate Hover-Prefetch (Modal)": {
+    "ttff": {
+      "median": 1202,
+      "min": 1201,
+      "max": 1203,
+      "stddev": 1.0,
+      "count": 3
+    },
+    "ttfb": {
+      "median": 807.0,
+      "min": 793,
+      "max": 821,
+      "stddev": 19.8,
+      "count": 2
+    },
+    "metadata": {
+      "median": 0,
+      "min": 0,
+      "max": 0,
+      "stddev": 0,
+      "count": 0
+    },
+    "loadeddata": {
+      "median": 0,
+      "min": 0,
+      "max": 0,
+      "stddev": 0,
+      "count": 0
+    },
+    "playing": {
+      "median": 0,
+      "min": 0,
+      "max": 0,
+      "stddev": 0,
+      "count": 0
+    },
+    "stream_src": {
+      "median": 0,
+      "min": 0,
+      "max": 0,
+      "stddev": 0,
+      "count": 0
+    },
+    "runs": [
+      {
+        "metrics": {
+          "videoId": "16440393",
+          "mode": "modal",
+          "cache": "warm",
+          "stream_src": 0,
+          "details_ready": 1,
+          "metadata": null,
+          "loadeddata": null,
+          "first_frame": 1201,
+          "playing": null,
+          "storyboard_start": null,
+          "storyboard_quick_ready": null,
+          "reported": true
+        },
+        "timing": {
+          "startTime": 1179,
+          "requestStart": 1180,
+          "responseStart": 2000,
+          "ttfb": 821
+        },
+        "ttff": 1201,
+        "ttfb": 821,
+        "stream_src": 0,
+        "metadata": 0,
+        "loadeddata": 0,
+        "playing": 0
+      },
+      {
+        "metrics": {
+          "videoId": "16440393",
+          "mode": "modal",
+          "cache": "warm",
+          "stream_src": 0,
+          "details_ready": 1,
+          "metadata": null,
+          "loadeddata": null,
+          "first_frame": 1202,
+          "playing": null,
+          "storyboard_start": null,
+          "storyboard_quick_ready": null,
+          "reported": true
+        },
+        "timing": null,
+        "ttff": 1202,
+        "ttfb": null,
+        "stream_src": 0,
+        "metadata": 0,
+        "loadeddata": 0,
+        "playing": 0
+      },
+      {
+        "metrics": {
+          "videoId": "16440393",
+          "mode": "modal",
+          "cache": "warm",
+          "stream_src": 0,
+          "details_ready": 1,
+          "metadata": null,
+          "loadeddata": null,
+          "first_frame": 1203,
+          "playing": null,
+          "storyboard_start": null,
+          "storyboard_quick_ready": null,
+          "reported": true
+        },
+        "timing": {
+          "startTime": 1014,
+          "requestStart": 1015,
+          "responseStart": 1807,
+          "ttfb": 793
+        },
+        "ttff": 1203,
+        "ttfb": 793,
+        "stream_src": 0,
+        "metadata": 0,
+        "loadeddata": 0,
+        "playing": 0
+      }
+    ]
+  },
+  "Archivebate Warm (Modal)": {
+    "ttff": {
+      "median": 1207,
+      "min": 1203,
+      "max": 1210,
+      "stddev": 3.5,
+      "count": 3
+    },
+    "ttfb": {
+      "median": 795,
+      "min": 783,
+      "max": 822,
+      "stddev": 20.0,
+      "count": 3
+    },
+    "metadata": {
+      "median": 0,
+      "min": 0,
+      "max": 0,
+      "stddev": 0,
+      "count": 0
+    },
+    "loadeddata": {
+      "median": 0,
+      "min": 0,
+      "max": 0,
+      "stddev": 0,
+      "count": 0
+    },
+    "playing": {
+      "median": 0,
+      "min": 0,
+      "max": 0,
+      "stddev": 0,
+      "count": 0
+    },
+    "stream_src": {
+      "median": 1.5,
+      "min": 1,
+      "max": 2,
+      "stddev": 0.7,
+      "count": 2
+    },
+    "runs": [
+      {
+        "metrics": {
+          "videoId": "16440393",
+          "mode": "modal",
+          "cache": "prefetch",
+          "stream_src": 2,
+          "details_ready": 50,
+          "metadata": null,
+          "loadeddata": null,
+          "first_frame": 1210,
+          "playing": null,
+          "storyboard_start": null,
+          "storyboard_quick_ready": null,
+          "reported": true
+        },
+        "timing": {
+          "startTime": 767,
+          "requestStart": 768,
+          "responseStart": 1550,
+          "ttfb": 783
+        },
+        "ttff": 1210,
+        "ttfb": 783,
+        "stream_src": 2,
+        "metadata": 0,
+        "loadeddata": 0,
+        "playing": 0
+      },
+      {
+        "metrics": {
+          "videoId": "16440393",
+          "mode": "modal",
+          "cache": "prefetch",
+          "stream_src": 1,
+          "details_ready": 51,
+          "metadata": null,
+          "loadeddata": null,
+          "first_frame": 1203,
+          "playing": null,
+          "storyboard_start": null,
+          "storyboard_quick_ready": null,
+          "reported": true
+        },
+        "timing": {
+          "startTime": 626,
+          "requestStart": 651,
+          "responseStart": 1448,
+          "ttfb": 822
+        },
+        "ttff": 1203,
+        "ttfb": 822,
+        "stream_src": 1,
+        "metadata": 0,
+        "loadeddata": 0,
+        "playing": 0
+      },
+      {
+        "metrics": {
+          "videoId": "16440393",
+          "mode": "modal",
+          "cache": "prefetch",
+          "stream_src": 0,
+          "details_ready": 50,
+          "metadata": null,
+          "loadeddata": null,
+          "first_frame": 1207,
+          "playing": null,
+          "storyboard_start": null,
+          "storyboard_quick_ready": null,
+          "reported": true
+        },
+        "timing": {
+          "startTime": 699,
+          "requestStart": 700,
+          "responseStart": 1495,
+          "ttfb": 795
+        },
+        "ttff": 1207,
+        "ttfb": 795,
+        "stream_src": 0,
+        "metadata": 0,
+        "loadeddata": 0,
+        "playing": 0
+      }
+    ]
+  },
+  "Camwhores Cold (/watch)": {
+    "ttff": {
+      "median": 1135,
+      "min": 903,
+      "max": 1217,
+      "stddev": 162.9,
+      "count": 3
+    },
+    "ttfb": {
+      "median": 0,
+      "min": 0,
+      "max": 0,
+      "stddev": 0,
+      "count": 0
+    },
+    "metadata": {
+      "median": 1105,
+      "min": 878,
+      "max": 1571,
+      "stddev": 353.3,
+      "count": 3
+    },
+    "loadeddata": {
+      "median": 1132,
+      "min": 905,
+      "max": 1603,
+      "stddev": 356.0,
+      "count": 3
+    },
+    "playing": {
+      "median": 1133,
+      "min": 906,
+      "max": 1604,
+      "stddev": 356.0,
+      "count": 3
+    },
+    "stream_src": {
+      "median": 2,
+      "min": 2,
+      "max": 2,
+      "stddev": 0.0,
+      "count": 3
+    },
+    "runs": [
+      {
+        "metrics": {
+          "videoId": "cw_17486750",
+          "mode": "/watch",
+          "cache": "cold",
+          "stream_src": 2,
+          "details_ready": 89,
+          "metadata": 1571,
+          "loadeddata": 1603,
+          "first_frame": 1217,
+          "playing": 1604,
+          "storyboard_start": null,
+          "storyboard_quick_ready": null,
+          "reported": true
+        },
+        "timing": null,
+        "ttff": 1217,
+        "ttfb": null,
+        "stream_src": 2,
+        "metadata": 1571,
+        "loadeddata": 1603,
+        "playing": 1604
+      },
+      {
+        "metrics": {
+          "videoId": "cw_17486750",
+          "mode": "/watch",
+          "cache": "cold",
+          "stream_src": 2,
+          "details_ready": 11,
+          "metadata": 878,
+          "loadeddata": 905,
+          "first_frame": 903,
+          "playing": 906,
+          "storyboard_start": null,
+          "storyboard_quick_ready": null,
+          "reported": true
+        },
+        "timing": null,
+        "ttff": 903,
+        "ttfb": null,
+        "stream_src": 2,
+        "metadata": 878,
+        "loadeddata": 905,
+        "playing": 906
+      },
+      {
+        "metrics": {
+          "videoId": "cw_17486750",
+          "mode": "/watch",
+          "cache": "cold",
+          "stream_src": 2,
+          "details_ready": 11,
+          "metadata": 1105,
+          "loadeddata": 1132,
+          "first_frame": 1135,
+          "playing": 1133,
+          "storyboard_start": null,
+          "storyboard_quick_ready": null,
+          "reported": true
+        },
+        "timing": null,
+        "ttff": 1135,
+        "ttfb": null,
+        "stream_src": 2,
+        "metadata": 1105,
+        "loadeddata": 1132,
+        "playing": 1133
+      }
+    ]
+  },
+  "Camwhores Warm (/watch)": {
+    "ttff": {
+      "median": 1058,
+      "min": 899,
+      "max": 1066,
+      "stddev": 94.2,
+      "count": 3
+    },
+    "ttfb": {
+      "median": 0,
+      "min": 0,
+      "max": 0,
+      "stddev": 0,
+      "count": 0
+    },
+    "metadata": {
+      "median": 1006,
+      "min": 861,
+      "max": 1034,
+      "stddev": 92.9,
+      "count": 3
+    },
+    "loadeddata": {
+      "median": 1057,
+      "min": 893,
+      "max": 1065,
+      "stddev": 97.1,
+      "count": 3
+    },
+    "playing": {
+      "median": 1058,
+      "min": 895,
+      "max": 1066,
+      "stddev": 96.5,
+      "count": 3
+    },
+    "stream_src": {
+      "median": 2,
+      "min": 2,
+      "max": 2,
+      "stddev": 0.0,
+      "count": 3
+    },
+    "runs": [
+      {
+        "metrics": {
+          "videoId": "cw_17486750",
+          "mode": "/watch",
+          "cache": "cold",
+          "stream_src": 2,
+          "details_ready": 8,
+          "metadata": 1006,
+          "loadeddata": 1057,
+          "first_frame": null,
+          "playing": 1058,
+          "storyboard_start": null,
+          "storyboard_quick_ready": null,
+          "reported": true
+        },
+        "timing": null,
+        "ttff": 1058,
+        "ttfb": null,
+        "stream_src": 2,
+        "metadata": 1006,
+        "loadeddata": 1057,
+        "playing": 1058
+      },
+      {
+        "metrics": {
+          "videoId": "cw_17486750",
+          "mode": "/watch",
+          "cache": "cold",
+          "stream_src": 2,
+          "details_ready": 10,
+          "metadata": 1034,
+          "loadeddata": 1065,
+          "first_frame": null,
+          "playing": 1066,
+          "storyboard_start": null,
+          "storyboard_quick_ready": null,
+          "reported": true
+        },
+        "timing": null,
+        "ttff": 1066,
+        "ttfb": null,
+        "stream_src": 2,
+        "metadata": 1034,
+        "loadeddata": 1065,
+        "playing": 1066
+      },
+      {
+        "metrics": {
+          "videoId": "cw_17486750",
+          "mode": "/watch",
+          "cache": "cold",
+          "stream_src": 2,
+          "details_ready": 9,
+          "metadata": 861,
+          "loadeddata": 893,
+          "first_frame": 899,
+          "playing": 895,
+          "storyboard_start": null,
+          "storyboard_quick_ready": null,
+          "reported": true
+        },
+        "timing": null,
+        "ttff": 899,
+        "ttfb": null,
+        "stream_src": 2,
+        "metadata": 861,
+        "loadeddata": 893,
+        "playing": 895
+      }
+    ]
+  },
+  "Camwhores Warm (Modal)": {
+    "ttff": {
+      "median": 1209,
+      "min": 1202,
+      "max": 1211,
+      "stddev": 4.7,
+      "count": 3
+    },
+    "ttfb": {
+      "median": 780,
+      "min": 776,
+      "max": 786,
+      "stddev": 5.0,
+      "count": 3
+    },
+    "metadata": {
+      "median": 0,
+      "min": 0,
+      "max": 0,
+      "stddev": 0,
+      "count": 0
+    },
+    "loadeddata": {
+      "median": 0,
+      "min": 0,
+      "max": 0,
+      "stddev": 0,
+      "count": 0
+    },
+    "playing": {
+      "median": 0,
+      "min": 0,
+      "max": 0,
+      "stddev": 0,
+      "count": 0
+    },
+    "stream_src": {
+      "median": 1,
+      "min": 1,
+      "max": 1,
+      "stddev": 0.0,
+      "count": 1
+    },
+    "runs": [
+      {
+        "metrics": {
+          "videoId": "16440393",
+          "mode": "modal",
+          "cache": "prefetch",
+          "stream_src": 0,
+          "details_ready": 43,
+          "metadata": null,
+          "loadeddata": null,
+          "first_frame": 1211,
+          "playing": null,
+          "storyboard_start": null,
+          "storyboard_quick_ready": null,
+          "reported": true
+        },
+        "timing": {
+          "startTime": 747,
+          "requestStart": 748,
+          "responseStart": 1533,
+          "ttfb": 786
+        },
+        "ttff": 1211,
+        "ttfb": 786,
+        "stream_src": 0,
+        "metadata": 0,
+        "loadeddata": 0,
+        "playing": 0
+      },
+      {
+        "metrics": {
+          "videoId": "16440393",
+          "mode": "modal",
+          "cache": "prefetch",
+          "stream_src": 1,
+          "details_ready": 38,
+          "metadata": null,
+          "loadeddata": null,
+          "first_frame": 1209,
+          "playing": null,
+          "storyboard_start": null,
+          "storyboard_quick_ready": null,
+          "reported": true
+        },
+        "timing": {
+          "startTime": 754,
+          "requestStart": 756,
+          "responseStart": 1531,
+          "ttfb": 776
+        },
+        "ttff": 1209,
+        "ttfb": 776,
+        "stream_src": 1,
+        "metadata": 0,
+        "loadeddata": 0,
+        "playing": 0
+      },
+      {
+        "metrics": {
+          "videoId": "16440393",
+          "mode": "modal",
+          "cache": "prefetch",
+          "stream_src": 0,
+          "details_ready": 35,
+          "metadata": null,
+          "loadeddata": null,
+          "first_frame": 1202,
+          "playing": null,
+          "storyboard_start": null,
+          "storyboard_quick_ready": null,
+          "reported": true
+        },
+        "timing": {
+          "startTime": 741,
+          "requestStart": 742,
+          "responseStart": 1521,
+          "ttfb": 780
+        },
+        "ttff": 1202,
+        "ttfb": 780,
+        "stream_src": 0,
+        "metadata": 0,
+        "loadeddata": 0,
+        "playing": 0
+      }
+    ]
+  }
+}

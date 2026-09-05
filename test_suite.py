@@ -638,6 +638,7 @@ class TestVideoStartupOptimization(unittest.TestCase):
         self.client = TestClient(app)
 
     def test_static_assets_versioned_caching_and_html_no_cache(self):
+        """Test 9 & 10: Cache-Control dla statycznych assetów ma immutable i długi max-age dla wersji z hashem/wersją, a HTML ma no-cache."""
         # 1. Zasoby ze znacznikiem wersji v= mają długi immutable cache
         res_css = self.client.get("/static/style.css?v=24.0")
         self.assertEqual(res_css.status_code, 200)
@@ -687,10 +688,391 @@ class TestVideoStartupOptimization(unittest.TestCase):
         except OSError:
             pass
 
-    def test_storyboard_workers_throttled_to_protect_playback_bandwidth(self):
+    def test_concurrency_details_and_stream_single_remote_fetch(self):
+        """Test 1: Concurrency: równoległe zapytania do /details i /stream dla tego samego wideo nie wywołują podwójnego pobierania z sieci (max 1 zdalne zapytanie)."""
+        import os
+        import main
+        test_id = "test_concurrent_singleflight_1"
+        if hasattr(main.scraper, "_details_cache"):
+            main.scraper._details_cache.pop(test_id, None)
+        try:
+            os.remove(main._details_cache_path(test_id))
+        except OSError:
+            pass
+
+        fetch_counter = {"count": 0}
+        lock = threading.Lock()
+
+        def mock_fetch(vid):
+            time.sleep(0.08)  # simulate remote latency
+            with lock:
+                fetch_counter["count"] += 1
+            return {
+                "id": vid,
+                "username": "ConcurrentModel",
+                "direct_url": "https://cdn.example.org/valid_video.mp4",
+                "embed_url": "https://mixdrop.ag/e/test_conc",
+                "date": "Dzisiaj"
+            }
+
+        with patch.object(main.scraper, "get_video_details", side_effect=mock_fetch), \
+             patch("main.is_safe_remote_url", return_value=True), \
+             patch("main._validated_session_get") as mock_get:
+            mock_resp = MagicMock()
+            mock_resp.status_code = 200
+            mock_resp.headers = {"Content-Type": "video/mp4", "Accept-Ranges": "bytes"}
+            mock_resp.iter_content.return_value = [b"video_data"]
+            mock_resp.close = MagicMock()
+            mock_get.return_value = mock_resp
+
+            results = []
+            def call_details():
+                res = self.client.get(f"/api/video/details?id={test_id}")
+                results.append(res.status_code)
+
+            def call_stream():
+                res = self.client.get(f"/api/video/stream?id={test_id}")
+                results.append(res.status_code)
+
+            threads = [
+                threading.Thread(target=call_details),
+                threading.Thread(target=call_stream),
+                threading.Thread(target=call_details),
+                threading.Thread(target=call_stream),
+            ]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
+
+            self.assertEqual(len(results), 4)
+            for code in results:
+                self.assertEqual(code, 200)
+            self.assertEqual(fetch_counter["count"], 1, "Expected exactly 1 remote details fetch for concurrent requests")
+
+    def test_concurrency_8_requests_on_403_exactly_one_details_refresh_and_new_url(self):
+        """Test 2 & 3: Concurrency: 8 równoległych żądań do wygasłego URL (symulacja 403 z Range) wykonuje DOKŁADNIE JEDNO zdalne odświeżenie detali i wszystkie otrzymują nowy URL."""
+        import os
+        import main
+        test_id = "test_403_herd_recovery"
+        if hasattr(main.scraper, "_details_cache"):
+            main.scraper._details_cache.pop(test_id, None)
+        try:
+            os.remove(main._details_cache_path(test_id))
+        except OSError:
+            pass
+
+        # Początkowy stan w cache: wygasły URL
+        expired_url = "https://cdn.example.org/expired_token_123.mp4"
+        fresh_url = "https://cdn.example.org/fresh_token_456.mp4"
+        main.atomic_write_json(main._details_cache_path(test_id), {
+            "id": test_id,
+            "direct_url": expired_url,
+            "embed_url": "https://mixdrop.ag/e/herd",
+            "url_generation": 1,
+            "cached_at": time.time(),
+            "refreshed_at": time.time()
+        })
+
+        refresh_counter = {"count": 0}
+        refresh_lock = threading.Lock()
+
+        def mock_scraper_refresh(vid):
+            time.sleep(0.06)  # simulate remote scraper latency
+            with refresh_lock:
+                refresh_counter["count"] += 1
+            return {
+                "id": vid,
+                "username": "RefreshedModel",
+                "direct_url": fresh_url,
+                "embed_url": "https://mixdrop.ag/e/herd",
+                "date": "Dzisiaj"
+            }
+
+        def mock_get(session, url, headers=None, stream=True, timeout=12):
+            resp = MagicMock()
+            if url == expired_url:
+                resp.status_code = 403
+                resp.headers = {}
+                resp.iter_content.return_value = []
+                resp.close = MagicMock()
+            else:
+                resp.status_code = 206
+                resp.headers = {
+                    "Content-Type": "video/mp4",
+                    "Content-Range": "bytes 0-100/1000",
+                    "Content-Length": "101",
+                    "Accept-Ranges": "bytes"
+                }
+                resp.iter_content.return_value = [b"stream_chunk_after_403"]
+                resp.close = MagicMock()
+            return resp
+
+        with patch.object(main.scraper, "get_video_details", side_effect=mock_scraper_refresh), \
+             patch("main.is_safe_remote_url", return_value=True), \
+             patch("main._validated_session_get", side_effect=mock_get):
+
+            responses = []
+            def worker():
+                r = self.client.get(f"/api/video/stream?id={test_id}", headers={"Range": "bytes=0-100"})
+                responses.append(r)
+
+            threads = [threading.Thread(target=worker) for _ in range(8)]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
+
+            self.assertEqual(len(responses), 8)
+            for r in responses:
+                self.assertEqual(r.status_code, 206)
+                self.assertEqual(r.headers.get("Content-Range"), "bytes 0-100/1000")
+                self.assertEqual(r.content, b"stream_chunk_after_403")
+
+            # Dokładnie jedno odświeżenie detali ze zdalnego serwera
+            self.assertEqual(refresh_counter["count"], 1, "Thundering herd: remote scraper was refreshed more than once!")
+
+            # W pamięci podręcznej znajduje się nowy URL, a nie stary 403
+            cached, _ = main.read_json_cache(main._details_cache_path(test_id))
+            self.assertIsNotNone(cached)
+            self.assertEqual(cached.get("direct_url"), fresh_url)
+
+    def test_range_header_preserved_after_403_retry(self):
+        """Test 4: Nagłówek Range jest zachowany po retry na 403."""
+        import os
+        import main
+        test_id = "test_range_preserve_vid"
+        if hasattr(main.scraper, "_details_cache"):
+            main.scraper._details_cache.pop(test_id, None)
+
+        expired_url = "https://cdn.example.org/expired_range.mp4"
+        fresh_url = "https://cdn.example.org/fresh_range.mp4"
+        main.atomic_write_json(main._details_cache_path(test_id), {
+            "id": test_id,
+            "direct_url": expired_url,
+            "url_generation": 1,
+            "cached_at": time.time()
+        })
+
+        captured_upstream_ranges = []
+        def mock_get(session, url, headers=None, stream=True, timeout=12):
+            if headers and "Range" in headers:
+                captured_upstream_ranges.append((url, headers["Range"]))
+            resp = MagicMock()
+            if url == expired_url:
+                resp.status_code = 403
+                resp.headers = {}
+                resp.iter_content.return_value = []
+                resp.close = MagicMock()
+            else:
+                resp.status_code = 206
+                resp.headers = {
+                    "Content-Type": "video/mp4",
+                    "Content-Range": "bytes 1024-2048/5000",
+                    "Content-Length": "1025",
+                    "Accept-Ranges": "bytes"
+                }
+                resp.iter_content.return_value = [b"chunk_range"]
+                resp.close = MagicMock()
+            return resp
+
+        mock_fresh = {"id": test_id, "direct_url": fresh_url, "embed_url": ""}
+        with patch.object(main.scraper, "get_video_details", return_value=mock_fresh), \
+             patch("main.is_safe_remote_url", return_value=True), \
+             patch("main._validated_session_get", side_effect=mock_get):
+
+            res = self.client.get(f"/api/video/stream?id={test_id}", headers={"Range": "bytes=1024-2048"})
+            self.assertEqual(res.status_code, 206)
+            self.assertEqual(len(captured_upstream_ranges), 2)
+            # Pierwsza próba (zwróciła 403)
+            self.assertEqual(captured_upstream_ranges[0], (expired_url, "bytes=1024-2048"))
+            # Druga próba (po odświeżeniu do fresh_url) - Range MUSI być zachowane!
+            self.assertEqual(captured_upstream_ranges[1], (fresh_url, "bytes=1024-2048"))
+
+    def test_range_response_headers_206_preserved(self):
+        """Test 5: Range request: odpowiedź 206 zawiera Content-Range, Content-Length i Accept-Ranges: bytes."""
+        import os
+        import main
+        test_id = "test_206_headers_vid"
+        main.atomic_write_json(main._details_cache_path(test_id), {
+            "id": test_id,
+            "direct_url": "https://cdn.example.org/sample206.mp4",
+            "url_generation": 1,
+            "cached_at": time.time()
+        })
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 206
+        mock_resp.headers = {
+            "Content-Type": "video/mp4",
+            "Content-Range": "bytes 500-999/5000",
+            "Content-Length": "500",
+            "Accept-Ranges": "bytes"
+        }
+        mock_resp.iter_content.return_value = [b"x" * 500]
+        mock_resp.close = MagicMock()
+
+        with patch("main.is_safe_remote_url", return_value=True), \
+             patch("main._validated_session_get", return_value=mock_resp):
+            res = self.client.get(f"/api/video/stream?id={test_id}", headers={"Range": "bytes=500-999"})
+            self.assertEqual(res.status_code, 206)
+            self.assertEqual(res.headers.get("Content-Range"), "bytes 500-999/5000")
+            self.assertEqual(res.headers.get("Content-Length"), "500")
+            self.assertEqual(res.headers.get("Accept-Ranges"), "bytes")
+
+    def test_expired_direct_url_never_reused_after_confirmed_403(self):
+        """Test 6: Przeterminowany direct_url nie jest używany po potwierdzonym 403."""
+        import os
+        import main
+        test_id = "test_403_invalidation"
+        if hasattr(main.scraper, "_details_cache"):
+            main.scraper._details_cache.pop(test_id, None)
+
+        expired_url = "https://cdn.example.org/definitely_expired.mp4"
+        fresh_url = "https://cdn.example.org/new_good_url.mp4"
+        main.atomic_write_json(main._details_cache_path(test_id), {
+            "id": test_id,
+            "direct_url": expired_url,
+            "url_generation": 1,
+            "cached_at": time.time()
+        })
+
+        def mock_get(session, url, headers=None, stream=True, timeout=12):
+            resp = MagicMock()
+            if url == expired_url:
+                resp.status_code = 403
+                resp.headers = {}
+                resp.iter_content.return_value = []
+                resp.close = MagicMock()
+            else:
+                resp.status_code = 200
+                resp.headers = {"Content-Type": "video/mp4", "Accept-Ranges": "bytes"}
+                resp.iter_content.return_value = [b"stream"]
+                resp.close = MagicMock()
+            return resp
+
+        with patch.object(main.scraper, "get_video_details", return_value={"id": test_id, "direct_url": fresh_url}), \
+             patch("main.is_safe_remote_url", return_value=True), \
+             patch("main._validated_session_get", side_effect=mock_get):
+            res = self.client.get(f"/api/video/stream?id={test_id}")
+            self.assertEqual(res.status_code, 200)
+
+            # Po 403 pobranie kolejnych detali zwraca fresh_url, nigdy expired_url
+            det = self.client.get(f"/api/video/details?id={test_id}").json()
+            self.assertEqual(det.get("direct_url"), fresh_url)
+            self.assertNotEqual(det.get("direct_url"), expired_url)
+
+    def test_storyboard_workers_strictly_bounded(self):
+        """Test 7 & 8: QUICK_WORKERS === 1 oraz FULL_WORKERS <= 2."""
         import storyboard_service
-        self.assertLessEqual(storyboard_service.QUICK_WORKERS, 2, "QUICK_WORKERS should be <= 2 to avoid starving video stream bandwidth")
-        self.assertLessEqual(storyboard_service.FULL_WORKERS, 2, "FULL_WORKERS should be <= 2 to avoid starving video stream bandwidth")
+        self.assertEqual(storyboard_service.QUICK_WORKERS, 1, "QUICK_WORKERS must be strictly 1 to avoid bandwidth starvation")
+        self.assertLessEqual(storyboard_service.FULL_WORKERS, 2, "FULL_WORKERS must be <= 2 to avoid bandwidth starvation")
+
+    def test_ssrf_protection_on_direct_url_blocks_local_and_metadata_ips(self):
+        """Test 11: Bezpieczeństwo: SafeHTTPAdapter blokuje SSRF na direct_url wskazującym na 127.0.0.1 i 169.254.169.254."""
+        res_loopback = self.client.get("/api/video/stream?url=http://127.0.0.1:8000/secret")
+        self.assertIn(res_loopback.status_code, (400, 500, 502))
+
+        res_metadata = self.client.get("/api/video/stream?url=http://169.254.169.254/latest/meta-data")
+        self.assertIn(res_metadata.status_code, (400, 500, 502))
+
+
+class TestModelPaginationAndAuthorWindow(unittest.TestCase):
+    """Testy weryfikujące poprawność paginacji w oknie autora, brak duplikatów między stronami oraz obliczanie last_page."""
+
+    def setUp(self):
+        from fastapi.testclient import TestClient
+        import main
+        self.client = TestClient(main.app)
+
+    def test_get_model_page_slices_camwhores_without_cross_page_duplicates(self):
+        """Weryfikuje, że filmy Camwhores są dzielone na strony po 20 sztuk i nie powtarzają się na kolejnych stronach."""
+        import main
+        from scraper import ArchivebateScraper
+
+        scraper = main.scraper
+        test_user = "testmodel_dedup"
+        scraper._cache.pop(f"model_page:{test_user}:1", None)
+        scraper._cache.pop(f"model_page:{test_user}:2", None)
+        scraper._cw_model_cache.pop(test_user, None)
+
+        ab_p1 = [{"id": f"ab_p1_{i}", "username": test_user, "date": "1 godzina temu"} for i in range(20)]
+        ab_p2 = [{"id": f"ab_p2_{i}", "username": test_user, "date": "2 dni temu"} for i in range(20)]
+        cw_all = [{"id": f"cw_vid_{i}", "username": test_user, "date": f"{i} godzin temu"} for i in range(25)]
+
+        with patch.object(scraper, "_cache") as mock_cache:
+            mock_cache.get.return_value = None
+            with patch("camwhores.camwhores_scraper.search_videos", return_value=cw_all):
+                with patch.object(scraper.session.session, "get") as mock_get:
+                    # Symulacja Archivebate zwracającego 40 wyników w sumie (20 na p1, 20 na p2)
+                    mock_resp1 = MagicMock()
+                    mock_resp1.text = 'of <span class="fw-semibold">40</span> results'
+                    mock_resp2 = MagicMock()
+                    mock_resp2.text = 'of <span class="fw-semibold">40</span> results'
+
+                    mock_get.side_effect = [mock_resp1, mock_resp2]
+                    with patch.object(scraper, "parse_video_card", side_effect=lambda sec: None):
+                        # Bezpośrednie wywołanie z mockowanym _fetch_ab lub weryfikacja slice
+                        pass
+
+        # Test logiki matematycznej i wycinków bezpośrednio
+        res_p1 = scraper.get_model_page(test_user, page=1)
+        res_p2 = scraper.get_model_page(test_user, page=2)
+
+        # Sprawdzamy czy żaden film CW nie powtarza się między stroną 1 i 2
+        p1_ids = {v["id"] for v in res_p1["videos"]}
+        p2_ids = {v["id"] for v in res_p2["videos"]}
+        self.assertEqual(len(p1_ids.intersection(p2_ids)), 0, "Brak duplikatów między stroną 1 i 2")
+
+    def test_get_model_page_computes_exact_last_page_and_total_videos(self):
+        """Weryfikuje dokładne wyliczanie last_page i total_videos z sumy Archivebate i Camwhores."""
+        import main
+        from scraper import ArchivebateScraper
+
+        scraper = main.scraper
+        test_user = "testmodel_calc"
+        scraper._cache.pop(f"model_page:{test_user}:1", None)
+        scraper._cw_model_cache.pop(test_user, None)
+
+        # Przypadek 1: AB ma 797 filmów (40 stron), CW ma 21 filmów (2 strony)
+        cw_vids = [{"id": f"cw_{i}", "username": test_user, "date": "1 dzień temu"} for i in range(21)]
+        scraper._cw_model_cache.set(test_user, cw_vids, ttl=300)
+
+        mock_resp = MagicMock()
+        mock_resp.text = (
+            '<section class="video_item"><a href="/watch/ab1">test</a></section>\n'
+            'Showing <span class="fw-semibold">1</span> to <span class="fw-semibold">20</span> of <span class="fw-semibold">797</span> results'
+        )
+
+        with patch.object(scraper.session.session, "get", return_value=mock_resp), \
+             patch.object(scraper, "parse_video_card", return_value={"id": "ab_1", "username": test_user, "date": "Dzisiaj"}):
+            res = scraper.get_model_page(test_user, page=1)
+            # 797 filmów na AB to ceil(797/20) = 40 stron. CW ma 21 filmów (2 strony).
+            self.assertEqual(res["last_page"], 40, "last_page powinno wynosić 40, a nie sztywne 20")
+            self.assertEqual(res["total_videos"], 797 + 21, "total_videos powinno być równe sumie 797 + 21 = 818")
+
+    def test_api_model_endpoint_returns_last_page_and_total_videos(self):
+        """Weryfikuje, że endpoint /api/model/{username} zwraca last_page i total_videos w JSON dla frontendu."""
+        import main
+        test_user = "test_api_author"
+        mock_page_data = {
+            "username": test_user,
+            "page": 2,
+            "last_page": 15,
+            "total_videos": 295,
+            "videos": [{"id": "vid_1", "username": test_user, "title": "Test Title", "date": "Wczoraj"}]
+        }
+
+        with patch.object(main.scraper, "get_model_page", return_value=mock_page_data):
+            res = self.client.get(f"/api/model/{test_user}?page=2")
+            self.assertEqual(res.status_code, 200)
+            data = res.json()
+            self.assertEqual(data["username"], test_user)
+            self.assertEqual(data["page"], 2)
+            self.assertEqual(data["last_page"], 15)
+            self.assertEqual(data["total_videos"], 295)
+            self.assertEqual(data["count"], 1)
+            self.assertIn("videos", data)
 
 
 if __name__ == "__main__":

@@ -670,13 +670,16 @@ def get_videos(
 
 @app.get("/api/model/{username}")
 def get_model_videos(username: str, page: int = Query(1, ge=1)):
-    """Pobiera filmy konkretnej modelki dla określonej strony."""
-    videos = scraper.get_model_videos(username=username, page=page)
+    """Pobiera filmy konkretnej modelki dla określonej strony wraz z rzeczywistą liczbą stron i łączną liczbą filmów."""
+    page_data = scraper.get_model_page(username=username, page=page)
+    enriched_videos = _enrich_videos(page_data.get("videos", []))
     return {
         "username": username,
         "page": page,
-        "count": len(videos),
-        "videos": _enrich_videos(videos)
+        "last_page": page_data.get("last_page", 1),
+        "total_videos": page_data.get("total_videos", len(enriched_videos)),
+        "count": len(enriched_videos),
+        "videos": enriched_videos
     }
 
 @app.get("/api/search/suggestions")
@@ -823,9 +826,11 @@ def _normalize_video_details(video_id: str, details: dict) -> dict:
     return details
 
 
-def _fetch_and_cache_details(video_id: str) -> dict:
+def _fetch_and_cache_details(video_id: str, old_generation: int = 0) -> dict:
     details = scraper.get_video_details(video_id) or {}
     if details:
+        details["url_generation"] = old_generation + 1
+        details["refreshed_at"] = time.time()
         try:
             atomic_write_json(_details_cache_path(video_id), details)
         except Exception as e:
@@ -833,14 +838,35 @@ def _fetch_and_cache_details(video_id: str) -> dict:
     return details
 
 
-def _fetch_details_singleflight(video_id: str) -> dict:
-    """Jedno pobranie strony detali na video ID, nawet gdy player i storyboard startują równocześnie."""
-    lock = _details_fetch_lock(video_id)
+def _fetch_details_singleflight(video_id: str, force_refresh: bool = False, failed_url: Optional[str] = None) -> dict:
+    """Jedno pobranie strony detali na video ID, nawet gdy player i storyboard startują równocześnie.
+    Obsługuje również bezpieczne odświeżenie po HTTP 403 z eliminacją thundering herd
+    oraz weryfikacją, czy oczekujący wątek nie ma już nowszego URL (failed_url != current_url).
+    """
+    clean_id = str(video_id).split("/")[-1].split("?")[0]
+    lock = _details_fetch_lock(clean_id)
     with lock:
-        cached, mtime = read_json_cache(_details_cache_path(video_id))
-        if isinstance(cached, dict) and cached.get("direct_url") and cache_age_seconds(mtime) <= DETAILS_CACHE_STALE_SECONDS:
-            return cached
-        return _fetch_and_cache_details(video_id)
+        cached, mtime = read_json_cache(_details_cache_path(clean_id))
+        old_generation = cached.get("url_generation", 1) if isinstance(cached, dict) else 0
+
+        if isinstance(cached, dict) and cached.get("direct_url"):
+            current_direct = cached.get("direct_url")
+            # 1. Zwykły odczyt (nie-force_refresh): jeśli cache nie jest przedawniony, zwracamy od razu
+            if not force_refresh and cache_age_seconds(mtime) <= DETAILS_CACHE_STALE_SECONDS:
+                return cached
+
+            # 2. Force refresh po 403 z podanym failed_url:
+            # Jeśli inny wątek trzymający ten sam lock zdążył już odświeżyć URL do nowszego,
+            # to current_direct != failed_url i nie wolno powtarzać pobierania!
+            if force_refresh and failed_url:
+                if current_direct != failed_url and cache_age_seconds(mtime) <= DETAILS_CACHE_STALE_SECONDS:
+                    return cached
+
+        # Wymuszenie świeżego pobrania z serwera pod pojedynczym lockiem:
+        if hasattr(scraper, "_details_cache"):
+            scraper._details_cache.pop(clean_id, None)
+
+        return _fetch_and_cache_details(clean_id, old_generation=old_generation)
 
 
 def _refresh_details_in_background(video_id: str) -> None:
@@ -850,11 +876,8 @@ def _refresh_details_in_background(video_id: str) -> None:
         _details_refreshing.add(video_id)
     def worker():
         try:
-            # Wymuszenie świeżych detali przez usunięcie wyłącznie cache RAM scrapera.
             clean_id = str(video_id).split("/")[-1].split("?")[0]
-            if hasattr(scraper, "_details_cache"):
-                scraper._details_cache.pop(clean_id, None)
-            _fetch_and_cache_details(video_id)
+            _fetch_details_singleflight(clean_id, force_refresh=True)
         except Exception as e:
             print(f"[Cache] Odświeżenie detali {video_id} nie powiodło się: {e}")
         finally:
@@ -875,9 +898,9 @@ def get_video_details(id: str = Query(...), force_refresh: bool = Query(False)):
         if age > DETAILS_CACHE_FRESH_SECONDS:
             _refresh_details_in_background(clean_id)
     elif force_refresh:
-        details = _fetch_and_cache_details(clean_id)
+        details = _fetch_details_singleflight(clean_id, force_refresh=True)
     else:
-        details = _fetch_details_singleflight(clean_id)
+        details = _fetch_details_singleflight(clean_id, force_refresh=False)
 
     return _normalize_video_details(clean_id, details)
 
@@ -889,13 +912,19 @@ stream_session.mount("https://", _stream_adapter)
 
 @app.get("/api/video/stream")
 def stream_video_proxy(url: str = Query(None), id: str = Query(None), embed: str = Query(None), request: Request = None):
-    """Proxy strumienia wideo z autoryzacją sesji MixDrop/Camwhores, poprawnym Referer i auto-odświeżaniem na 403."""
+    """Proxy strumienia wideo z autoryzacją sesji MixDrop/Camwhores, poprawnym Referer i single-flight auto-odświeżaniem na 403."""
+    t_start = time.perf_counter()
+    t_details_cache = 0.0
+    t_upstream_connect = 0.0
+    t_recovery_403 = 0.0
+
     clean_id = id.split("/")[-1].split("?")[0] if id else None
     embed_url = embed
 
     if not url and clean_id:
-        # Najpierw sprawdzamy persistent/memory cache lub pojedyncze pobranie single-flight
+        t_d0 = time.perf_counter()
         details = _fetch_details_singleflight(clean_id)
+        t_details_cache = (time.perf_counter() - t_d0) * 1000
         if isinstance(details, dict):
             url = details.get("direct_url")
             embed_url = embed_url or details.get("embed_url")
@@ -930,28 +959,28 @@ def stream_video_proxy(url: str = Query(None), id: str = Query(None), embed: str
             pass
 
     try:
+        t_up0 = time.perf_counter()
         req = _validated_session_get(active_session, url, headers=headers, stream=True, timeout=12)
+        t_upstream_connect = (time.perf_counter() - t_up0) * 1000
 
-        # Jeśli URL wygasł (403), natychmiast wyczyść cache, pobierz świeży direct_url i ponów próbę
+        # Jeśli URL wygasł (403), natychmiast odśwież przez single-flight (zapobieganie thundering herd)
         if req.status_code == 403 and clean_id:
-            if hasattr(scraper, "_details_cache") and clean_id in scraper._details_cache:
-                del scraper._details_cache[clean_id]
-            try:
-                os.remove(_details_cache_path(clean_id))
-            except OSError:
-                pass
-            fresh_details = scraper.get_video_details(clean_id)
-            if fresh_details:
-                try:
-                    atomic_write_json(_details_cache_path(clean_id), fresh_details)
-                except Exception:
-                    pass
-            url = fresh_details.get("direct_url")
-            embed_url = fresh_details.get("embed_url") or embed_url
-            if url and is_safe_remote_url(url):
-                headers["Referer"] = embed_url or "https://mixdrop.ag/"
-                req.close()
+            old_failing_url = url
+            req.close()
+            t_rec0 = time.perf_counter()
+            fresh_details = _fetch_details_singleflight(clean_id, force_refresh=True, failed_url=old_failing_url)
+            t_recovery_403 = (time.perf_counter() - t_rec0) * 1000
+            new_url = (fresh_details or {}).get("direct_url")
+            embed_url = (fresh_details or {}).get("embed_url") or embed_url
+            if new_url and new_url != old_failing_url and is_safe_remote_url(new_url):
+                url = new_url
+                headers["Referer"] = embed_url or ("https://www.camwhores.tv/" if "camwhores" in url else "https://mixdrop.ag/")
+                # Nagłówek Range jest zachowany w headers["Range"]!
                 req = _validated_session_get(active_session, url, headers=headers, stream=True, timeout=12)
+
+        t_total = (time.perf_counter() - t_start) * 1000
+        if (request and request.headers.get("x-debug-perf") == "1") or os.environ.get("ARCHIVEBATE_DEBUG_PERF") == "1":
+            print(f"[STREAM PERF] id={clean_id or 'url'} details_cache={t_details_cache:.1f}ms upstream_connect={t_upstream_connect:.1f}ms recovery_403={t_recovery_403:.1f}ms response_ready={t_total:.1f}ms")
 
         if req.status_code not in (200, 206):
             code = req.status_code
