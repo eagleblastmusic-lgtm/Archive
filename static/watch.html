@@ -787,6 +787,25 @@
       }
     }
 
+    function showWatchVideoError(message = 'Nie udało się załadować wideo. Spróbuj odświeżyć.') {
+      loaderDismissed = true;
+      perfTracker?.markLoaderHidden('video-error');
+      logPerf(`player error: ${message}`);
+      if (loader) {
+        loader.style.opacity = '1';
+        loader.style.display = 'flex';
+        loader.innerHTML = `
+          <div class="watch-loader-badge" style="border-color: rgba(239, 68, 68, 0.4); background: rgba(15, 23, 42, 0.92);">
+            <i class="fa-solid fa-circle-exclamation" style="color: #ef4444; font-size: 24px;"></i>
+            <div style="font-size: 14px; font-weight: 600; color: #fca5a5;">${message}</div>
+          </div>
+        `;
+      }
+      if (watchPoster) {
+        watchPoster.style.opacity = '0.35';
+      }
+    }
+
     function prepareWatchStoryboard(dur) {
       const isCamwhores = String(videoId).startsWith('cw_') || String(currentDetails?.url || '').includes('camwhores');
       if (isCamwhores || !videoId || !window.ArchivebateYouTubeStoryboard) return;
@@ -914,9 +933,7 @@
       }, { once: true });
 
       player.addEventListener('error', () => {
-        logPerf('player error');
-        hideWatchLoader('video-error');
-        if (loader) loader.innerHTML = '<div style="color: #ef4444; font-weight: 600;">Nie udało się załadować wideo. Spróbuj odświeżyć.</div>';
+        showWatchVideoError('Nie udało się załadować wideo. Spróbuj odświeżyć.');
       }, { once: true });
 
       // Storyboard uruchamiany na hover osi czasu (intencja użytkownika)
@@ -962,6 +979,8 @@
         updateFavState(!!data.is_favorite);
 
         if (data.is_private) {
+          loaderDismissed = true;
+          perfTracker?.markLoaderHidden('video-error');
           player.pause();
           player.removeAttribute('src');
           player.load();

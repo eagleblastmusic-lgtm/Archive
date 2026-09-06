@@ -197,33 +197,69 @@
     let lastSeekAt = 0;
     let destroyed = false;
     let seekSerial = 0;
+    let settledSerial = 0;
     let activeTarget = null;
+
+    const settleSeek = (serial, outcome, data = {}) => {
+      // Jeśli zniszczony, albo ten request nie jest bieżący, albo został już wcześniej sfinalizowany:
+      if (destroyed || serial !== seekSerial || serial <= settledSerial) return;
+      settledSerial = serial;
+      inFlight = false;
+      activeTarget = null;
+      if (watchdog) {
+        clearTimeout(watchdog);
+        watchdog = null;
+      }
+
+      // Jeżeli w międzyczasie nadszedł nowszy request (requestedTime !== null),
+      // to ten request stał się nieaktualny (stale).
+      // Zgodnie z wytycznymi: stale requesty są po cichu ignorowane (nie wywołują ani onFrame, ani onFrameMiss),
+      // a kolejka nie zamraża się i natychmiast uruchamiany jest najnowszy request.
+      const hasNewerRequest = (requestedTime !== null);
+
+      if (!hasNewerRequest) {
+        if (outcome === 'frame') {
+          if (typeof options.onFrame === 'function') {
+            options.onFrame(data.currentTime, data.targetTime);
+          }
+        } else if (outcome === 'miss') {
+          if (typeof options.onFrameMiss === 'function') {
+            options.onFrameMiss(data.result || { presented: false, reason: data.reason || 'unspecified' }, data.targetTime);
+          }
+        } else if (outcome === 'error') {
+          if (typeof options.onError === 'function') {
+            options.onError(data.error);
+          } else if (typeof options.onFrameMiss === 'function') {
+            options.onFrameMiss({ presented: false, reason: 'video-error', error: data.error }, data.targetTime);
+          }
+        }
+      }
+
+      if (requestedTime !== null) {
+        request(requestedTime);
+      }
+    };
 
     const dispatchPresentedFrame = async (serial, targetTime) => {
       let result = null;
       try {
         result = await waitForPresentedFrame(video, targetTime, Math.min(1300, watchdogMs));
-      } catch (_) {}
+      } catch (err) {
+        result = { presented: false, reason: 'exception', error: err };
+      }
 
-      if (destroyed || serial !== seekSerial) return;
-      clearTimeout(watchdog);
-      inFlight = false;
-      activeTarget = null;
+      if (destroyed || serial !== seekSerial || serial <= settledSerial) return;
 
       if (!result || !result.presented) {
-        if (result?.reason === 'video-error' && typeof options.onError === 'function') {
-          options.onError(result.error);
-        } else if (typeof options.onFrameMiss === 'function') {
-          options.onFrameMiss(result || { presented: false, reason: 'unspecified' }, targetTime);
+        if (result?.reason === 'video-error') {
+          settleSeek(serial, 'error', { result, error: result.error, targetTime });
+        } else {
+          settleSeek(serial, 'miss', { result, reason: result?.reason || 'unspecified', targetTime });
         }
-        if (requestedTime !== null) request(requestedTime);
         return;
       }
 
-      if (typeof options.onFrame === 'function') {
-        options.onFrame(video.currentTime, targetTime);
-      }
-      if (requestedTime !== null) request(requestedTime);
+      settleSeek(serial, 'frame', { currentTime: video.currentTime, targetTime });
     };
 
     const onSeeked = () => {
@@ -234,11 +270,10 @@
     };
 
     const onError = () => {
-      clearTimeout(watchdog);
-      inFlight = false;
-      activeTarget = null;
-      if (typeof options.onError === 'function') options.onError();
-      if (requestedTime !== null) request(requestedTime);
+      if (destroyed || !inFlight) return;
+      const serial = seekSerial;
+      const target = activeTarget;
+      settleSeek(serial, 'error', { error: video?.error, targetTime: target });
     };
 
     const onMetadata = () => {
@@ -260,15 +295,9 @@
         const serial = ++seekSerial;
         inFlight = true;
         activeTarget = seekTime;
-        clearTimeout(watchdog);
+        if (watchdog) clearTimeout(watchdog);
         watchdog = setTimeout(() => {
-          if (serial !== seekSerial) return;
-          inFlight = false;
-          activeTarget = null;
-          if (typeof options.onFrameMiss === 'function') {
-            options.onFrameMiss({ presented: false, reason: 'timeout', timedOut: true }, seekTime);
-          }
-          if (requestedTime !== null) request(requestedTime);
+          settleSeek(serial, 'miss', { reason: 'timeout', timedOut: true, targetTime: seekTime });
         }, watchdogMs);
         dispatchPresentedFrame(serial, seekTime);
         return;
@@ -277,22 +306,16 @@
       const serial = ++seekSerial;
       inFlight = true;
       activeTarget = seekTime;
-      clearTimeout(watchdog);
+      if (watchdog) clearTimeout(watchdog);
       watchdog = setTimeout(() => {
-        if (serial !== seekSerial) return;
-        inFlight = false;
-        activeTarget = null;
-        if (typeof options.onFrameMiss === 'function') {
-          options.onFrameMiss({ presented: false, reason: 'timeout', timedOut: true }, seekTime);
-        }
-        if (requestedTime !== null) request(requestedTime);
+        settleSeek(serial, 'miss', { reason: 'timeout', timedOut: true, targetTime: seekTime });
       }, watchdogMs);
 
       try {
         // Nie używamy fastSeek: może stale wybierać ten sam wcześniejszy keyframe.
         video.currentTime = seekTime;
-      } catch (_) {
-        onError();
+      } catch (err) {
+        settleSeek(serial, 'error', { error: err, targetTime: seekTime });
       }
     }
 
@@ -311,6 +334,7 @@
       inFlight = false;
       activeTarget = null;
       seekSerial += 1; // unieważnia oczekujące callbacki starego hovera
+      settledSerial = seekSerial;
       clearTimeout(timer);
       clearTimeout(watchdog);
     }

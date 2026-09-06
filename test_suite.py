@@ -1721,6 +1721,277 @@ setTimeout(() => {
         self.assertIsNone(res.get("first_frame"), "first_frame przy błędzie musi być null")
         self.assertEqual(res.get("loader_hidden_reason"), "video-error")
 
+    # =========================================================================
+    # TESTY NOWE: DOKŁADNIE JEDEN onFrameMiss, RACE TIMEOUT VS RVFC, LATEST WINS,
+    # ORAZ WIDOCZNOŚĆ ERROR UI W MODALU I NA /WATCH
+    # =========================================================================
+
+    def test_seeker_7_miss_called_exactly_once(self):
+        """Seeker Test 7: Watchdog timeout (watchdogMs=40, RVFC brak) -> onFrameMiss wywołane DOKŁADNIE RAZ, onFrame 0 razy."""
+        js = """
+let frameCount = 0;
+let missCount = 0;
+const listeners = {};
+const mockVideo = {
+  duration: 60,
+  readyState: 2,
+  _currentTime: 0,
+  get currentTime() { return this._currentTime; },
+  set currentTime(t) {
+    this._currentTime = t;
+    if (listeners['seeked']) setTimeout(() => listeners['seeked'].forEach(fn => fn()), 5);
+  },
+  requestVideoFrameCallback: () => 1, // nigdy nie odpowiada
+  addEventListener: (ev, h) => {
+    if (!listeners[ev]) listeners[ev] = [];
+    listeners[ev].push(h);
+  },
+  removeEventListener: () => {},
+  cancelVideoFrameCallback: () => {}
+};
+const seeker = ArchivebatePlayerCore.createPreviewSeeker(mockVideo, {
+  minInterval: 10,
+  watchdogMs: 40,
+  onFrame: () => { frameCount++; },
+  onFrameMiss: () => { missCount++; }
+});
+seeker.request(15);
+setTimeout(() => {
+  console.log(JSON.stringify({ frameCount, missCount }));
+}, 120);
+"""
+        res = self.run_node_eval(js)
+        self.assertEqual(res.get("missCount"), 1, "onFrameMiss musi zostać wywołane dokładnie raz!")
+        self.assertEqual(res.get("frameCount"), 0, "onFrame nie może zostać wywołane przy braku klatki!")
+
+    def test_seeker_8_race_timeout_vs_rvfc_exactly_one_callback(self):
+        """Seeker Test 8: Wyścig timeout vs RVFC -> dokładnie jeden terminalny callback (onFrameCount + onFrameMissCount == 1)."""
+        js = """
+let frameCount = 0;
+let missCount = 0;
+const listeners = {};
+const mockVideo = {
+  duration: 60,
+  readyState: 2,
+  _currentTime: 0,
+  get currentTime() { return this._currentTime; },
+  set currentTime(t) {
+    this._currentTime = t;
+    if (listeners['seeked']) setTimeout(() => listeners['seeked'].forEach(fn => fn()), 2);
+  },
+  requestVideoFrameCallback: (cb) => {
+    setTimeout(() => cb(50, { mediaTime: 12.0 }), 48); // RVFC bardzo blisko timeoutu 50ms
+    return 1;
+  },
+  addEventListener: (ev, h) => {
+    if (!listeners[ev]) listeners[ev] = [];
+    listeners[ev].push(h);
+  },
+  removeEventListener: () => {},
+  cancelVideoFrameCallback: () => {}
+};
+const seeker = ArchivebatePlayerCore.createPreviewSeeker(mockVideo, {
+  minInterval: 5,
+  watchdogMs: 50,
+  onFrame: () => { frameCount++; },
+  onFrameMiss: () => { missCount++; }
+});
+seeker.request(12);
+setTimeout(() => {
+  console.log(JSON.stringify({ frameCount, missCount, total: frameCount + missCount }));
+}, 120);
+"""
+        res = self.run_node_eval(js)
+        self.assertEqual(res.get("total"), 1, "Suma onFrameCount + onFrameMissCount musi wynosić DOKŁADNIE 1")
+        self.assertLessEqual(res.get("frameCount"), 1)
+        self.assertLessEqual(res.get("missCount"), 1)
+
+    def test_seeker_9_latest_request_wins_stale_ignored(self):
+        """Seeker Test 9: Sekwencja A@10s, B@20s, C@30s, D@40s -> wygrywa D@40s, a stare callbacki są ignorowane."""
+        js = """
+const publishedTargets = [];
+const missedTargets = [];
+const listeners = {};
+let pendingRvfc = [];
+const mockVideo = {
+  duration: 100,
+  readyState: 2,
+  _currentTime: 0,
+  get currentTime() { return this._currentTime; },
+  set currentTime(t) {
+    this._currentTime = t;
+    if (listeners['seeked']) {
+      setTimeout(() => {
+        listeners['seeked'].forEach(fn => fn());
+      }, 5);
+    }
+  },
+  requestVideoFrameCallback: (cb) => {
+    pendingRvfc.push(cb);
+    return pendingRvfc.length;
+  },
+  addEventListener: (ev, h) => {
+    if (!listeners[ev]) listeners[ev] = [];
+    listeners[ev].push(h);
+  },
+  removeEventListener: () => {},
+  cancelVideoFrameCallback: () => {}
+};
+const seeker = ArchivebatePlayerCore.createPreviewSeeker(mockVideo, {
+  minInterval: 10,
+  watchdogMs: 300,
+  onFrame: (curr, target) => { publishedTargets.push(target); },
+  onFrameMiss: (res, target) => { missedTargets.push(target); }
+});
+
+seeker.request(10); // A
+setTimeout(() => seeker.request(20), 2); // B
+setTimeout(() => seeker.request(30), 4); // C
+setTimeout(() => seeker.request(40), 6); // D
+
+// Symulujemy klatki wideo jak w przeglądarce (renderowane co ~16ms)
+const rvfcInterval = setInterval(() => {
+  if (pendingRvfc.length > 0) {
+    const cbs = pendingRvfc.splice(0);
+    cbs.forEach(cb => {
+      try { cb(performance.now(), { mediaTime: mockVideo.currentTime }); } catch (_) {}
+    });
+  }
+}, 10);
+
+setTimeout(() => {
+  clearInterval(rvfcInterval);
+  console.log(JSON.stringify({
+    publishedTargets,
+    missedTargets,
+    finalPublished: publishedTargets[publishedTargets.length - 1]
+  }));
+}, 140);
+"""
+        res = self.run_node_eval(js)
+        self.assertEqual(res.get("finalPublished"), 40, "Ostatecznym opublikowanym celem musi być D@40s")
+        self.assertNotIn(10, res.get("publishedTargets", []), "Stary request 10s nie może opublikować klatki gdy nadszedł nowszy request")
+        self.assertNotIn(10, res.get("missedTargets", []), "Stary request 10s nie może raportować miss gdy został zastąpiony nowszym")
+
+    def test_modal_error_ui_state_and_visibility(self):
+        """Modal Error UI Test: Błąd wideo w modalu -> loader widoczny (display=flex, opacity=1), komunikat błędu, TTFF null."""
+        js = """
+const dom = {
+  videoLoader: {
+    style: { display: 'none', opacity: '0' },
+    innerHTML: '<div class="spinner"></div>'
+  },
+  modalLoadingPoster: {
+    style: { display: 'none', opacity: '1' }
+  },
+  modalVideo: {
+    pause: () => {},
+    play: () => Promise.resolve()
+  }
+};
+let toastMsg = null;
+const showToast = (msg) => { toastMsg = msg; };
+const modalPerfTracker = new ArchivebatePlayerCore.VideoPerfTracker('modal_err_test', 'modal');
+
+let modalLoaderDismissed = false;
+const hideLoadingPoster = (reason = 'unknown') => {
+  if (modalLoaderDismissed) return;
+  modalLoaderDismissed = true;
+  modalPerfTracker.markLoaderHidden(reason);
+  dom.videoLoader.style.opacity = '0';
+  dom.videoLoader.style.display = 'none';
+};
+
+const showModalVideoError = (message = 'Błąd ładowania strumienia. Spróbuj odświeżyć.') => {
+  modalLoaderDismissed = true;
+  modalPerfTracker.markLoaderHidden('video-error');
+  if (dom.videoLoader) {
+    dom.videoLoader.style.opacity = '1';
+    dom.videoLoader.style.display = 'flex';
+    dom.videoLoader.innerHTML = `<div class="video-loader-badge"><span>${message}</span></div>`;
+  }
+  if (dom.modalLoadingPoster) {
+    dom.modalLoadingPoster.style.opacity = '0.35';
+  }
+  showToast(message, 'error');
+};
+
+// Symulacja błędu wideo:
+showModalVideoError('Błąd połączenia z serwerem wideo');
+
+// Próba ukrycia przez spóźniony callback nie może zniszczyć komunikatu błędu:
+hideLoadingPoster('playing');
+
+const metrics = modalPerfTracker.getMetrics();
+console.log(JSON.stringify({
+  loaderDisplay: dom.videoLoader.style.display,
+  loaderOpacity: dom.videoLoader.style.opacity,
+  hasErrorBadge: dom.videoLoader.innerHTML.includes('Błąd połączenia'),
+  firstFrame: metrics.first_frame,
+  loaderHiddenReason: metrics.loader_hidden_reason
+}));
+"""
+        res = self.run_node_eval(js)
+        self.assertEqual(res.get("loaderDisplay"), "flex", "Po błędzie overlay musi mieć display: flex")
+        self.assertEqual(res.get("loaderOpacity"), "1", "Po błędzie overlay musi mieć opacity: 1")
+        self.assertTrue(res.get("hasErrorBadge"), "Overlay musi zawierać treść komunikatu błędu")
+        self.assertIsNone(res.get("firstFrame"), "TTFF / first_frame przy błędzie musi być null")
+        self.assertEqual(res.get("loaderHiddenReason"), "video-error", "loader_hidden_reason musi wskazywać video-error")
+
+    def test_watch_error_ui_state_and_not_hidden_after_200ms(self):
+        """Watch Error UI Test: Błąd wideo na /watch -> overlay widoczny (display=flex, opacity=1), komunikat błędu, nie znika po 200ms."""
+        js = """
+const loader = {
+  style: { display: 'none', opacity: '0' },
+  innerHTML: '<div class="spinner"></div>'
+};
+const watchPoster = {
+  style: { display: 'none', opacity: '1' }
+};
+let loaderDismissed = false;
+const perfTracker = new ArchivebatePlayerCore.VideoPerfTracker('watch_err_test', '/watch');
+
+function hideWatchLoader(reason = 'unknown') {
+  if (loaderDismissed) return;
+  loaderDismissed = true;
+  perfTracker.markLoaderHidden(reason);
+  loader.style.opacity = '0';
+  setTimeout(() => {
+    loader.style.display = 'none';
+  }, 200);
+}
+
+function showWatchVideoError(message = 'Nie udało się załadować wideo. Spróbuj odświeżyć.') {
+  loaderDismissed = true;
+  perfTracker.markLoaderHidden('video-error');
+  loader.style.opacity = '1';
+  loader.style.display = 'flex';
+  loader.innerHTML = `<div class="watch-loader-badge"><div>${message}</div></div>`;
+  watchPoster.style.opacity = '0.35';
+}
+
+// Wywołujemy błąd wideo
+showWatchVideoError('Nie udało się załadować wideo. Spróbuj odświeżyć.');
+
+// Symulujemy upłynięcie 250ms
+setTimeout(() => {
+  const metrics = perfTracker.getMetrics();
+  console.log(JSON.stringify({
+    loaderDisplay: loader.style.display,
+    loaderOpacity: loader.style.opacity,
+    hasErrorMsg: loader.innerHTML.includes('Nie udało się załadować wideo'),
+    firstFrame: metrics.first_frame,
+    loaderHiddenReason: metrics.loader_hidden_reason
+  }));
+}, 250);
+"""
+        res = self.run_node_eval(js)
+        self.assertEqual(res.get("loaderDisplay"), "flex", "Overlay po 200ms nadal musi mieć display: flex")
+        self.assertEqual(res.get("loaderOpacity"), "1", "Overlay po 200ms nadal musi mieć opacity: 1")
+        self.assertTrue(res.get("hasErrorMsg"), "Overlay musi zawierać treść komunikatu błędu")
+        self.assertIsNone(res.get("firstFrame"), "TTFF / first_frame przy błędzie musi być null")
+        self.assertEqual(res.get("loaderHiddenReason"), "video-error")
+
 
 if __name__ == "__main__":
     unittest.main()

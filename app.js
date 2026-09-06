@@ -2310,8 +2310,16 @@ async function openVideoModal(video) {
   dom.modalIframe.style.display = 'none';
   dom.modalVideo.pause();
   dom.modalIframe.src = '';
-  dom.videoLoader.style.opacity = '1';
-  dom.videoLoader.style.display = 'flex';
+  if (dom.videoLoader) {
+    dom.videoLoader.innerHTML = `
+      <div class="video-loader-badge">
+        <div class="spinner"></div>
+        <span>Ładowanie wideo...</span>
+      </div>
+    `;
+    dom.videoLoader.style.opacity = '1';
+    dom.videoLoader.style.display = 'flex';
+  }
 
   // GRAFIKA PODGLĄDOWA PODCZAS ŁADOWANIA FILMU (NIGDY CZARNY EKRAN I NIGDY ROZMYCIE!)
   let posterSrc = (video.thumbnail || video.poster || '').replace('.mp4', '.jpg');
@@ -2435,6 +2443,25 @@ async function openVideoModal(video) {
     }
   };
 
+  const showModalVideoError = (message = 'Błąd ładowania strumienia. Spróbuj odświeżyć.') => {
+    modalLoaderDismissed = true;
+    modalPerfTracker?.markLoaderHidden('video-error');
+    if (dom.videoLoader) {
+      dom.videoLoader.style.opacity = '1';
+      dom.videoLoader.style.display = 'flex';
+      dom.videoLoader.innerHTML = `
+        <div class="video-loader-badge" style="border-color: rgba(239, 68, 68, 0.4); background: rgba(15, 23, 42, 0.92);">
+          <i class="fa-solid fa-circle-exclamation" style="color: #ef4444; font-size: 20px;"></i>
+          <span style="color: #fca5a5; font-weight: 600;">${message}</span>
+        </div>
+      `;
+    }
+    if (dom.modalLoadingPoster) {
+      dom.modalLoadingPoster.style.opacity = '0.35';
+    }
+    showToast(message, 'error');
+  };
+
   // Precyzyjne wykrywanie pierwszej wyrenderowanej klatki
   if (modalPerfTracker) {
     modalPerfTracker.attachToPlayer(dom.modalVideo, (result) => {
@@ -2537,9 +2564,7 @@ async function openVideoModal(video) {
     }, 1800);
   };
   dom.modalVideo.onerror = () => {
-    modalLoaderDismissed = true;
-    hideLoadingPoster('video-error');
-    showToast('Błąd ładowania strumienia. Spróbuj odświeżyć.', 'error');
+    showModalVideoError('Błąd ładowania strumienia. Spróbuj odświeżyć.');
   };
   dom.modalVideo.play().catch(() => {});
 
@@ -2562,10 +2587,7 @@ async function openVideoModal(video) {
       dom.modalVideo.pause();
       dom.modalVideo.removeAttribute('src');
       dom.modalVideo.load();
-      modalLoaderDismissed = true;
-      if (dom.videoLoader) dom.videoLoader.style.display = 'none';
-      if (dom.modalLoadingPoster) dom.modalLoadingPoster.style.display = 'none';
-      showToast('Ten film jest oznaczony jako prywatny na Camwhores (dostępny tylko dla członków serwisu)', 'error', 6000);
+      showModalVideoError('Ten film jest oznaczony jako prywatny na Camwhores (dostępny tylko dla członków serwisu)');
       dom.modalKeywords.innerHTML = '<div style="color: #f87171; font-weight: 600; padding: 6px 0;"><i class="fa-solid fa-lock"></i> Film prywatny na Camwhores (dostępny wyłącznie dla zalogowanych autorów serwisu).</div>';
       return;
     }
