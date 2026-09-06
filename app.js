@@ -17,8 +17,15 @@ function isFavoriteAuthor(username) {
 document.addEventListener('DOMContentLoaded', () => {
   initUserStatus();
   initTags();
-  initCamwhoresToggle();
-  initAuthorFilterToggle();
+  const filtersModule = (typeof window !== 'undefined' && window.ArchivebateFilters)
+    ? window.ArchivebateFilters
+    : (typeof ArchivebateFilters !== 'undefined' ? ArchivebateFilters : null);
+  if (filtersModule && typeof filtersModule.init === 'function') {
+    filtersModule.init({
+      showToast,
+      loadHomeVideos
+    });
+  }
   initProfileScanner();
   updateHomeStats();
   updateCheckpointUI();
@@ -36,108 +43,6 @@ document.addEventListener('DOMContentLoaded', () => {
   setupEvents();
   initModalPlayerControls();
 });
-
-// ============================================================
-// PRZEŁĄCZNIK ŹRÓDEŁ (WSZYSTKIE / TYLKO CAMWHORES / TYLKO ARCHIVEBATE)
-// ============================================================
-function updateCamwhoresToggleUI() {
-  const mode = state.sourceFilter || 'all';
-  document.body.classList.remove('source-only-camwhores', 'source-only-archivebate', 'hide-camwhores');
-  if (dom.toggleCamwhoresBtn) {
-    dom.toggleCamwhoresBtn.classList.remove('mode-all', 'mode-only-camwhores', 'mode-only-archivebate', 'active', 'disabled');
-  }
-
-  if (mode === 'only-camwhores') {
-    document.body.classList.add('source-only-camwhores');
-    if (dom.toggleCamwhoresBtn) dom.toggleCamwhoresBtn.classList.add('mode-only-camwhores');
-    if (dom.camwhoresToggleLabel) dom.camwhoresToggleLabel.innerText = 'Tylko Camwhores';
-    if (dom.sourceToggleIcon) dom.sourceToggleIcon.className = 'fa-solid fa-tv';
-  } else if (mode === 'only-archivebate') {
-    document.body.classList.add('source-only-archivebate');
-    if (dom.toggleCamwhoresBtn) dom.toggleCamwhoresBtn.classList.add('mode-only-archivebate');
-    if (dom.camwhoresToggleLabel) dom.camwhoresToggleLabel.innerText = 'Tylko Archivebate';
-    if (dom.sourceToggleIcon) dom.sourceToggleIcon.className = 'fa-solid fa-film';
-  } else {
-    // 'all'
-    if (dom.toggleCamwhoresBtn) dom.toggleCamwhoresBtn.classList.add('mode-all');
-    if (dom.camwhoresToggleLabel) dom.camwhoresToggleLabel.innerText = 'Wszystkie';
-    if (dom.sourceToggleIcon) dom.sourceToggleIcon.className = 'fa-solid fa-layer-group';
-  }
-}
-
-function initCamwhoresToggle() {
-  updateCamwhoresToggleUI();
-  if (dom.toggleCamwhoresBtn) {
-    dom.toggleCamwhoresBtn.addEventListener('click', () => {
-      if (state.sourceFilter === 'all') {
-        state.sourceFilter = 'only-camwhores';
-        showToast('Źródło: Wyświetlam TYLKO filmy z Camwhores.tv (280 filmów na stronę)', 'info');
-      } else if (state.sourceFilter === 'only-camwhores') {
-        state.sourceFilter = 'only-archivebate';
-        showToast('Źródło: Wyświetlam TYLKO filmy z Archivebate (280 filmów na stronę)', 'info');
-      } else {
-        state.sourceFilter = 'all';
-        showToast('Źródło: Wyświetlam WSZYSTKIE źródła (Archivebate + Camwhores, 280 filmów)', 'info');
-      }
-      localStorage.setItem('archivebate_source_filter', state.sourceFilter);
-      updateCamwhoresToggleUI();
-      if (state.mode === 'home') {
-        loadHomeVideos(1);
-      }
-    });
-  }
-}
-
-// ============================================================
-// FILTROWANIE AUTORÓW (WSZYSCY / TYLKO POLUBIENI / BEZ POLUBIONYCH)
-// ============================================================
-function updateAuthorFilterUI() {
-  const mode = state.authorFilter || 'all';
-  document.body.classList.remove('author-filter-only-fav', 'author-filter-exclude-fav');
-  if (dom.toggleAuthorFilterBtn) {
-    dom.toggleAuthorFilterBtn.classList.remove('mode-all', 'mode-only-fav', 'mode-exclude-fav');
-  }
-
-  if (mode === 'only_fav') {
-    document.body.classList.add('author-filter-only-fav');
-    if (dom.toggleAuthorFilterBtn) dom.toggleAuthorFilterBtn.classList.add('mode-only-fav');
-    if (dom.authorFilterLabel) dom.authorFilterLabel.innerText = 'Tylko polubieni';
-    if (dom.authorFilterIcon) dom.authorFilterIcon.className = 'fa-solid fa-star';
-  } else if (mode === 'exclude_fav') {
-    document.body.classList.add('author-filter-exclude-fav');
-    if (dom.toggleAuthorFilterBtn) dom.toggleAuthorFilterBtn.classList.add('mode-exclude-fav');
-    if (dom.authorFilterLabel) dom.authorFilterLabel.innerText = 'Bez polubionych';
-    if (dom.authorFilterIcon) dom.authorFilterIcon.className = 'fa-solid fa-user-slash';
-  } else {
-    // 'all'
-    if (dom.toggleAuthorFilterBtn) dom.toggleAuthorFilterBtn.classList.add('mode-all');
-    if (dom.authorFilterLabel) dom.authorFilterLabel.innerText = 'Wszyscy';
-    if (dom.authorFilterIcon) dom.authorFilterIcon.className = 'fa-solid fa-users';
-  }
-}
-
-function initAuthorFilterToggle() {
-  updateAuthorFilterUI();
-  if (dom.toggleAuthorFilterBtn) {
-    dom.toggleAuthorFilterBtn.addEventListener('click', () => {
-      if (state.authorFilter === 'all') {
-        state.authorFilter = 'only_fav';
-        showToast('Autorzy: Pokazuję TYLKO nagrania od polubionych autorów (280 filmów)', 'info');
-      } else if (state.authorFilter === 'only_fav') {
-        state.authorFilter = 'exclude_fav';
-        showToast('Autorzy: Odfiltrowano polubionych — odkrywaj NOWYCH twórców! (280 filmów)', 'info');
-      } else {
-        state.authorFilter = 'all';
-        showToast('Autorzy: Wyświetlam WSZYSTKICH autorów (280 filmów)', 'info');
-      }
-      localStorage.setItem('archivebate_author_filter', state.authorFilter);
-      updateAuthorFilterUI();
-      if (state.mode === 'home') {
-        loadHomeVideos(1);
-      }
-    });
-  }
-}
 
 function initProfileScanner() {
   const btn = document.getElementById('quickScanBtn');

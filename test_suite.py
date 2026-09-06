@@ -2822,6 +2822,318 @@ console.log(JSON.stringify(result));
         self.assertEqual(res["stateMode"], "home")
 
 
+class TestFiltersExtraction(unittest.TestCase):
+    """Weryfikacja wyodrębnienia obsługi filtrów (static/filters.js) - Etap 2 refaktoryzacji."""
+
+    @classmethod
+    def setUpClass(cls):
+        import shutil
+        cls.node_available = shutil.which("node") is not None
+
+    def run_node_eval(self, js_code: str):
+        if not self.node_available:
+            self.skipTest("Node.js nie jest zainstalowany w środowisku.")
+        import json
+        import subprocess
+        full_code = f"""
+const fs = require('fs');
+{js_code}
+"""
+        proc = subprocess.run(["node", "-e", full_code], capture_output=True, text=True, encoding="utf-8", timeout=10)
+        self.assertEqual(proc.returncode, 0, f"Node script failed with stderr: {proc.stderr}\nstdout: {proc.stdout}")
+        return json.loads(proc.stdout.strip())
+
+    def test_filters_file_structure_order_and_clean_app_js(self):
+        """Sprawdza obecność static/filters.js, kolejność skryptów w index.html oraz usunięcie 4 funkcji z app.js."""
+        import os
+        self.assertTrue(os.path.exists("static/filters.js"), "Brak pliku static/filters.js!")
+
+        with open("static/app.js", "r", encoding="utf-8") as f1, open("app.js", "r", encoding="utf-8") as f2:
+            self.assertEqual(f1.read(), f2.read(), "app.js w root musi być zgodny z static/app.js!")
+
+        with open("static/index.html", "r", encoding="utf-8") as f1, open("index.html", "r", encoding="utf-8") as f2:
+            self.assertEqual(f1.read(), f2.read(), "index.html w root musi być zgodny z static/index.html!")
+
+        with open("static/index.html", "r", encoding="utf-8") as f:
+            html = f.read()
+
+        ctx_idx = html.find('src="/static/app-context.js')
+        filters_idx = html.find('src="/static/filters.js')
+        app_idx = html.find('src="/static/app.js')
+        self.assertNotEqual(ctx_idx, -1, "Brak tagu script dla app-context.js w index.html!")
+        self.assertNotEqual(filters_idx, -1, "Brak tagu script dla filters.js w index.html!")
+        self.assertNotEqual(app_idx, -1, "Brak tagu script dla app.js w index.html!")
+        self.assertLess(ctx_idx, filters_idx, "app-context.js musi być ładowany przed filters.js!")
+        self.assertLess(filters_idx, app_idx, "filters.js musi być ładowany przed app.js!")
+
+        with open("static/app.js", "r", encoding="utf-8") as f:
+            app_code = f.read()
+        self.assertNotIn("function updateCamwhoresToggleUI()", app_code, "static/app.js nie powinien zawierać updateCamwhoresToggleUI!")
+        self.assertNotIn("function initCamwhoresToggle()", app_code, "static/app.js nie powinien zawierać initCamwhoresToggle!")
+        self.assertNotIn("function updateAuthorFilterUI()", app_code, "static/app.js nie powinien zawierać updateAuthorFilterUI!")
+        self.assertNotIn("function initAuthorFilterToggle()", app_code, "static/app.js nie powinien zawierać initAuthorFilterToggle!")
+
+    def test_source_filter_cycle_and_dom_effects(self):
+        """Weryfikuje cykl przełączania filtra źródeł (all -> only-camwhores -> only-archivebate -> all)."""
+        js = """
+global.window = global;
+const toasts = [];
+const homeLoads = [];
+const localStore = {};
+const listeners = {};
+const bodyClasses = new Set();
+global.document = {
+  body: {
+    classList: {
+      add: (...args) => args.forEach(c => bodyClasses.add(c)),
+      remove: (...args) => args.forEach(c => bodyClasses.delete(c)),
+      contains: (c) => bodyClasses.has(c)
+    }
+  },
+  getElementById: (id) => {
+    const classes = new Set();
+    return {
+      id,
+      classList: {
+        add: (...args) => args.forEach(c => classes.add(c)),
+        remove: (...args) => args.forEach(c => classes.delete(c)),
+        contains: (c) => classes.has(c)
+      },
+      addEventListener: (evt, fn) => { listeners[id] = fn; },
+      innerText: '',
+      className: '',
+      style: {}
+    };
+  },
+  addEventListener: () => {}
+};
+global.localStorage = {
+  getItem: (k) => localStore[k] || null,
+  setItem: (k, v) => { localStore[k] = String(v); }
+};
+
+require('./static/app-context.js');
+require('./static/filters.js');
+
+const filters = window.ArchivebateFilters;
+filters.init({
+  showToast: (m, t) => toasts.push({ m, t }),
+  loadHomeVideos: (p) => homeLoads.push(p)
+});
+
+const initialSource = window.ArchivebateAppContext.state.sourceFilter;
+
+// 1. click: all -> only-camwhores
+listeners['toggleCamwhoresBtn']();
+const click1_source = window.ArchivebateAppContext.state.sourceFilter;
+const click1_ls = localStore['archivebate_source_filter'];
+const click1_toast = toasts[toasts.length - 1].m;
+const click1_body = bodyClasses.has('source-only-camwhores');
+
+// 2. click: only-camwhores -> only-archivebate
+listeners['toggleCamwhoresBtn']();
+const click2_source = window.ArchivebateAppContext.state.sourceFilter;
+const click2_ls = localStore['archivebate_source_filter'];
+const click2_toast = toasts[toasts.length - 1].m;
+const click2_body = bodyClasses.has('source-only-archivebate');
+
+// 3. click: only-archivebate -> all
+listeners['toggleCamwhoresBtn']();
+const click3_source = window.ArchivebateAppContext.state.sourceFilter;
+const click3_ls = localStore['archivebate_source_filter'];
+const click3_toast = toasts[toasts.length - 1].m;
+const click3_body = !bodyClasses.has('source-only-camwhores') && !bodyClasses.has('source-only-archivebate');
+
+console.log(JSON.stringify({
+  initialSource,
+  click1_source, click1_ls, click1_toast, click1_body,
+  click2_source, click2_ls, click2_toast, click2_body,
+  click3_source, click3_ls, click3_toast, click3_body,
+  homeLoadsCount: homeLoads.length
+}));
+"""
+        res = self.run_node_eval(js)
+        self.assertEqual(res["initialSource"], "all")
+        self.assertEqual(res["click1_source"], "only-camwhores")
+        self.assertEqual(res["click1_ls"], "only-camwhores")
+        self.assertIn("TYLKO filmy z Camwhores.tv", res["click1_toast"])
+        self.assertTrue(res["click1_body"])
+
+        self.assertEqual(res["click2_source"], "only-archivebate")
+        self.assertEqual(res["click2_ls"], "only-archivebate")
+        self.assertIn("TYLKO filmy z Archivebate", res["click2_toast"])
+        self.assertTrue(res["click2_body"])
+
+        self.assertEqual(res["click3_source"], "all")
+        self.assertEqual(res["click3_ls"], "all")
+        self.assertIn("WSZYSTKIE źródła", res["click3_toast"])
+        self.assertTrue(res["click3_body"])
+        self.assertEqual(res["homeLoadsCount"], 3)
+
+    def test_author_filter_cycle_and_dom_effects(self):
+        """Weryfikuje cykl przełączania filtra autorów (all -> only_fav -> exclude_fav -> all)."""
+        js = """
+global.window = global;
+const toasts = [];
+const homeLoads = [];
+const localStore = {};
+const listeners = {};
+const bodyClasses = new Set();
+global.document = {
+  body: {
+    classList: {
+      add: (...args) => args.forEach(c => bodyClasses.add(c)),
+      remove: (...args) => args.forEach(c => bodyClasses.delete(c)),
+      contains: (c) => bodyClasses.has(c)
+    }
+  },
+  getElementById: (id) => {
+    const classes = new Set();
+    return {
+      id,
+      classList: {
+        add: (...args) => args.forEach(c => classes.add(c)),
+        remove: (...args) => args.forEach(c => classes.delete(c)),
+        contains: (c) => classes.has(c)
+      },
+      addEventListener: (evt, fn) => { listeners[id] = fn; },
+      innerText: '',
+      className: '',
+      style: {}
+    };
+  },
+  addEventListener: () => {}
+};
+global.localStorage = {
+  getItem: (k) => localStore[k] || null,
+  setItem: (k, v) => { localStore[k] = String(v); }
+};
+
+require('./static/app-context.js');
+require('./static/filters.js');
+
+const filters = window.ArchivebateFilters;
+filters.init({
+  showToast: (m, t) => toasts.push({ m, t }),
+  loadHomeVideos: (p) => homeLoads.push(p)
+});
+
+const initialAuthor = window.ArchivebateAppContext.state.authorFilter;
+
+// 1. click: all -> only_fav
+listeners['toggleAuthorFilterBtn']();
+const click1_author = window.ArchivebateAppContext.state.authorFilter;
+const click1_ls = localStore['archivebate_author_filter'];
+const click1_toast = toasts[toasts.length - 1].m;
+const click1_body = bodyClasses.has('author-filter-only-fav');
+
+// 2. click: only_fav -> exclude_fav
+listeners['toggleAuthorFilterBtn']();
+const click2_author = window.ArchivebateAppContext.state.authorFilter;
+const click2_ls = localStore['archivebate_author_filter'];
+const click2_toast = toasts[toasts.length - 1].m;
+const click2_body = bodyClasses.has('author-filter-exclude-fav');
+
+// 3. click: exclude_fav -> all
+listeners['toggleAuthorFilterBtn']();
+const click3_author = window.ArchivebateAppContext.state.authorFilter;
+const click3_ls = localStore['archivebate_author_filter'];
+const click3_toast = toasts[toasts.length - 1].m;
+const click3_body = !bodyClasses.has('author-filter-only-fav') && !bodyClasses.has('author-filter-exclude-fav');
+
+console.log(JSON.stringify({
+  initialAuthor,
+  click1_author, click1_ls, click1_toast, click1_body,
+  click2_author, click2_ls, click2_toast, click2_body,
+  click3_author, click3_ls, click3_toast, click3_body,
+  homeLoadsCount: homeLoads.length
+}));
+"""
+        res = self.run_node_eval(js)
+        self.assertEqual(res["initialAuthor"], "all")
+        self.assertEqual(res["click1_author"], "only_fav")
+        self.assertEqual(res["click1_ls"], "only_fav")
+        self.assertIn("TYLKO nagrania od polubionych", res["click1_toast"])
+        self.assertTrue(res["click1_body"])
+
+        self.assertEqual(res["click2_author"], "exclude_fav")
+        self.assertEqual(res["click2_ls"], "exclude_fav")
+        self.assertIn("Odfiltrowano polubionych", res["click2_toast"])
+        self.assertTrue(res["click2_body"])
+
+        self.assertEqual(res["click3_author"], "all")
+        self.assertEqual(res["click3_ls"], "all")
+        self.assertIn("WSZYSTKICH autorów", res["click3_toast"])
+        self.assertTrue(res["click3_body"])
+        self.assertEqual(res["homeLoadsCount"], 3)
+
+    def test_app_bootstrap_with_filters_module(self):
+        """Weryfikuje integrację bootstrapu: app.js inicjalizuje ArchivebateFilters na DOMContentLoaded."""
+        js = """
+global.window = global;
+global.window.addEventListener = () => {};
+global.fetch = () => Promise.resolve({ ok: false, json: () => Promise.resolve([]) });
+const domListeners = {};
+global.document = {
+  getElementById: (id) => ({
+    id,
+    addEventListener: (evt, fn) => {},
+    classList: { add: () => {}, remove: () => {}, contains: () => false },
+    style: {},
+    innerText: '',
+    className: '',
+    appendChild: () => {},
+    innerHTML: '',
+    remove: () => {}
+  }),
+  createElement: () => ({
+    appendChild: () => {},
+    classList: { add: () => {}, remove: () => {} },
+    style: {},
+    remove: () => {}
+  }),
+  querySelectorAll: () => [],
+  addEventListener: (evt, fn) => { domListeners[evt] = fn; },
+  body: { classList: { add: () => {}, remove: () => {} } }
+};
+global.localStorage = { getItem: () => null, setItem: () => {} };
+global.location = { search: '' };
+global.URLSearchParams = class { get() { return null; } };
+
+require('./static/player-core.js');
+require('./static/performance.js');
+require('./static/app-context.js');
+require('./static/filters.js');
+
+const appJsCode = fs.readFileSync('static/app.js', 'utf8');
+eval(appJsCode);
+
+let filtersInitCalled = false;
+let passedDeps = null;
+const originalInit = window.ArchivebateFilters.init;
+window.ArchivebateFilters.init = function(deps) {
+  filtersInitCalled = true;
+  passedDeps = deps;
+  return originalInit.call(this, deps);
+};
+
+domListeners['DOMContentLoaded']();
+
+console.log(JSON.stringify({
+  hasFiltersGlobal: typeof window.ArchivebateFilters === 'object',
+  filtersInitCalled,
+  hasShowToast: typeof (passedDeps && passedDeps.showToast) === 'function',
+  hasLoadHomeVideos: typeof (passedDeps && passedDeps.loadHomeVideos) === 'function'
+}));
+process.exit(0);
+"""
+        res = self.run_node_eval(js)
+        self.assertTrue(res["hasFiltersGlobal"])
+        self.assertTrue(res["filtersInitCalled"])
+        self.assertTrue(res["hasShowToast"])
+        self.assertTrue(res["hasLoadHomeVideos"])
+
+
 if __name__ == "__main__":
     unittest.main()
 
