@@ -15,7 +15,16 @@ function isFavoriteAuthor(username) {
 
 // Inicjalizacja
 document.addEventListener('DOMContentLoaded', () => {
-  initUserStatus();
+  window.ArchivebateAccount.init({
+    showToast,
+    setActiveNavTab,
+    loadFavorites,
+    loadHistory,
+    loadFollowing,
+    updateAllAuthorNameColors,
+    updateBlockedModelsCount
+  });
+  window.ArchivebateAccount.initUserStatus();
   initTags();
   const filtersModule = (typeof window !== 'undefined' && window.ArchivebateFilters)
     ? window.ArchivebateFilters
@@ -273,11 +282,6 @@ function setupEvents() {
     loadFollowing(1);
   });
 
-  dom.navAccountBtn.addEventListener('click', () => {
-    setActiveNavTab(dom.navAccountBtn);
-    showAccountPanel();
-  });
-
   // Przyciski w Panelu Konta
   dom.statBtnFavs.addEventListener('click', () => {
     setActiveNavTab(dom.navFavoritesBtn);
@@ -297,9 +301,6 @@ function setupEvents() {
   if (dom.statBtnBlocked) {
     dom.statBtnBlocked.addEventListener('click', showBlockedModelsManager);
   }
-
-  dom.panelSyncBtn.addEventListener('click', syncAccountWithRemote);
-  dom.panelClearHistoryBtn.addEventListener('click', clearWatchHistory);
 
   // Wyszukiwarka z debounce i natychmiastowym klawiszem Enter
   let debounceTimeout = null;
@@ -368,23 +369,6 @@ function setupEvents() {
       if (pageVal >= 1) {
         changePage(pageVal);
       }
-    }
-  });
-
-  // Relogin & Sync
-  dom.reloginBtn.addEventListener('click', async () => {
-    showToast('Synchronizacja konta...', 'info');
-    try {
-      const res = await fetch('/api/relogin', { method: 'POST' });
-      const data = await res.json();
-      if (data.success) {
-        showToast('Zsynchronizowano pomyślnie!', 'success');
-        updateUserStatus(data.status);
-      } else {
-        showToast(data?.status?.login_error || 'Błąd logowania!', 'error');
-      }
-    } catch (e) {
-      showToast('Błąd połączenia', 'error');
     }
   });
 
@@ -471,72 +455,6 @@ function changePage(newPage) {
   }
 }
 
-// STATUS UŻYTKOWNIKA I SYNCHRONIZACJA
-let userStatusRetryCount = 0;
-async function initUserStatus() {
-  try {
-    const data = await ArchivebateAPI.getJSON('/api/status', { timeoutMs: 5000 });
-    updateUserStatus(data);
-
-    // Serwer loguje się w tle, żeby logowanie nie blokowało pierwszego ekranu.
-    // Jeżeli jeszcze trwa, odśwież status kilka razy bez wpływu na miniatury.
-    if (data.account_configured && !data.logged_in && !data.login_error && userStatusRetryCount < 5) {
-      userStatusRetryCount += 1;
-      dom.userEmail.innerText = 'Łączenie...';
-      dom.statusDot.classList.remove('error');
-      setTimeout(initUserStatus, 1200 + userStatusRetryCount * 500);
-    } else {
-      userStatusRetryCount = 0;
-    }
-  } catch (e) {
-    if (userStatusRetryCount < 3) {
-      userStatusRetryCount += 1;
-      setTimeout(initUserStatus, 1500);
-      return;
-    }
-    dom.userEmail.innerText = 'Błąd sesji';
-    dom.statusDot.classList.add('error');
-  }
-}
-
-function updateUserStatus(status) {
-  if (status.logged_in) {
-    dom.userEmail.innerText = status.email;
-    dom.statusDot.classList.remove('error');
-    dom.userEmail.title = 'Zalogowano pomyślnie jako ' + status.email;
-    dom.panelEmail.innerText = status.email;
-  } else if (!status.account_configured) {
-    dom.userEmail.innerText = 'Tryb anonimowy';
-    dom.userEmail.title = 'Dodaj dane konta w .env.local, aby włączyć synchronizację konta.';
-    dom.panelEmail.innerText = 'Konto nieskonfigurowane';
-    dom.statusDot.classList.add('error');
-  } else {
-    dom.userEmail.innerText = `${status.email || 'Konto'} (offline)`;
-    dom.userEmail.title = status.login_error || 'Nie udało się zalogować do Archivebate.';
-    dom.statusDot.classList.add('error');
-  }
-
-  state.favoritesCount = status.favorites_count || 0;
-  state.historyCount = status.history_count || 0;
-  state.followingCount = status.following_count || 0;
-
-  dom.navFavCount.innerText = state.favoritesCount;
-  dom.navHistCount.innerText = state.historyCount;
-  dom.statFavCount.innerText = state.favoritesCount;
-  dom.statHistCount.innerText = state.historyCount;
-  dom.statFollCount.innerText = state.followingCount;
-
-  if (status.favorite_authors) {
-    state.favoriteAuthors = new Set(status.favorite_authors.map(a => String(a).toLowerCase().trim()));
-    updateAllAuthorNameColors();
-  }
-
-  if (status.last_synced) {
-    dom.panelLastSync.innerHTML = `<i class="fa-solid fa-clock"></i> Ostatnia synchronizacja: ${status.last_synced}`;
-  }
-  updateBlockedModelsCount();
-}
-
 function updateAllAuthorNameColors() {
   document.querySelectorAll('.video-card').forEach(card => {
     const link = card.querySelector('.model-profile-link');
@@ -585,42 +503,6 @@ function updateAllAuthorNameColors() {
       if (isFav) modalContent.classList.add('is-favorite-modal');
       else modalContent.classList.remove('is-favorite-modal');
     }
-  }
-}
-
-// SYNCHRONIZACJA Z SERWISEM
-async function syncAccountWithRemote() {
-  showToast('Pobieranie wszystkich stron z konta Archivebate...', 'info');
-  dom.panelSyncBtn.disabled = true;
-  try {
-    const res = await fetch('/api/account/sync', { method: 'POST' });
-    const data = await res.json();
-    if (data.success) {
-      showToast(`Pobrano: ${data.favorites_count} ulubionych, ${data.history_count} historii, ${data.following_count} obserwowanych!`, 'success');
-      updateUserStatus(data);
-      if (state.mode === 'favorites') loadFavorites(1);
-      if (state.mode === 'history') loadHistory(1);
-      if (state.mode === 'following') loadFollowing(1);
-    }
-  } catch (e) {
-    showToast('Błąd synchronizacji', 'error');
-  } finally {
-    dom.panelSyncBtn.disabled = false;
-  }
-}
-
-// CZYSZCZENIE HISTORII
-async function clearWatchHistory() {
-  if (!confirm('Czy na pewno chcesz wyczyścić historię oglądania?')) return;
-  try {
-    await fetch('/api/account/history/clear', { method: 'POST' });
-    state.historyCount = 0;
-    dom.navHistCount.innerText = '0';
-    dom.statHistCount.innerText = '0';
-    showToast('Historia została wyczyszczona', 'info');
-    if (state.mode === 'history') loadHistory(1);
-  } catch (e) {
-    showToast('Błąd czyszczenia historii', 'error');
   }
 }
 
@@ -1066,19 +948,6 @@ async function loadFollowing(page = 1) {
   } catch (e) {
     showToast(e?.message || 'Błąd ładowania obserwowanych', 'error');
   }
-}
-
-// ZAKŁADKA: PANEL KONTA
-function showAccountPanel() {
-  state.mode = 'account';
-  dom.accountPanelView.style.display = 'block';
-  dom.tagsSection.style.display = 'none';
-  if (dom.homeStatsBar) dom.homeStatsBar.style.display = 'none';
-  dom.contentHeader.style.display = 'none';
-  dom.matchedProfiles.style.display = 'none';
-  dom.videoGrid.innerHTML = '';
-  dom.paginationSection.style.display = 'none';
-  initUserStatus();
 }
 
 // WYSZUKIWANIE PO TAGU / FRAZIE ZE STRUMIENIOWANIEM W CZASIE RZECZYWISTYM ("PO KOLEI")
