@@ -1273,20 +1273,34 @@ def warm_video_stream(id: str = Query(..., min_length=1)):
                                 "Range": f"bytes={tail_start}-"
                             }
                             r_tail = _validated_session_get(active_session, direct_url, headers=tail_headers, stream=False, timeout=6)
-                            if r_tail.status_code in (200, 206) and r_tail.content:
-                                tail_end = total_size - 1
-                                url_gen = details.get("url_generation", 1)
-                                startup_range_cache.put_tail(
-                                    video_id=clean_id,
-                                    url_generation=url_gen,
-                                    content_length=total_size,
-                                    tail_start=tail_start,
-                                    tail_end=tail_end,
-                                    tail_bytes=r_tail.content,
-                                    etag=r_tail.headers.get("ETag"),
-                                    last_modified=r_tail.headers.get("Last-Modified"),
-                                    content_type=r_tail.headers.get("Content-Type", "video/mp4")
-                                )
+                            if r_tail.status_code == 206 and r_tail.content:
+                                cr_tail = r_tail.headers.get("Content-Range", "").strip()
+                                m_cr = re.match(r"^bytes\s+(\d+)-(\d+)/(\d+)$", cr_tail)
+                                if m_cr:
+                                    cr_start = int(m_cr.group(1))
+                                    cr_end = int(m_cr.group(2))
+                                    cr_total = int(m_cr.group(3))
+                                    tail_body = r_tail.content
+                                    body_len = len(tail_body)
+                                    if (
+                                        cr_start == tail_start
+                                        and cr_end == total_size - 1
+                                        and cr_total == total_size
+                                        and body_len == (cr_end - cr_start + 1)
+                                        and body_len <= TAIL_CACHE_BYTES
+                                    ):
+                                        url_gen = details.get("url_generation", 1)
+                                        startup_range_cache.put_tail(
+                                            video_id=clean_id,
+                                            url_generation=url_gen,
+                                            content_length=total_size,
+                                            tail_start=tail_start,
+                                            tail_end=cr_end,
+                                            tail_bytes=tail_body,
+                                            etag=r_tail.headers.get("ETag"),
+                                            last_modified=r_tail.headers.get("Last-Modified"),
+                                            content_type=r_tail.headers.get("Content-Type", "video/mp4")
+                                        )
                     except Exception:
                         pass
             finally:

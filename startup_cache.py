@@ -45,6 +45,9 @@ class StartupRangeCache:
             return False
 
         size = len(tail_bytes)
+        if size > self._max_bytes or size > TAIL_CACHE_BYTES:
+            return False
+
         now = time.time()
 
         with self._lock:

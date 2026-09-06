@@ -2308,6 +2308,365 @@ class TestPlayability(unittest.TestCase):
         self.assertEqual(cache.stats()["entries_count"], 0)
 
 
+class TestStartupTailAndZeroFlashHardening(unittest.TestCase):
+    """Zestaw testów regresyjnych hardeningowych dla MP4 startup tail cache oraz zero-flash render gate."""
+
+    @classmethod
+    def setUpClass(cls):
+        import shutil
+        cls.node_available = shutil.which("node") is not None
+
+    def run_node_eval(self, js_code: str):
+        if not self.node_available:
+            self.skipTest("Node.js nie jest zainstalowany w środowisku.")
+        import json
+        import subprocess
+        full_code = f"""
+const fs = require('fs');
+{js_code}
+"""
+        proc = subprocess.run(["node", "-e", full_code], capture_output=True, text=True, timeout=10)
+        self.assertEqual(proc.returncode, 0, f"Node script failed with stderr: {proc.stderr}\nstdout: {proc.stdout}")
+        return json.loads(proc.stdout.strip())
+
+    # --- Grupa A: Tail prefetch hardening ---
+
+    def test_group_A_tail_prefetch_hardening_valid_206(self):
+        """Grupa A1: Poprawny upstream 206 z dopasowanym Content-Range zapisuje tail do RAM cache."""
+        from unittest.mock import patch, MagicMock
+        from fastapi.testclient import TestClient
+        import main
+        from startup_cache import startup_range_cache, TAIL_CACHE_BYTES
+
+        test_id = "test_warm_valid_206"
+        startup_range_cache.clear()
+
+        total_size = 1000000
+        tail_start = total_size - TAIL_CACHE_BYTES
+        tail_end = total_size - 1
+        tail_len = tail_end - tail_start + 1
+        valid_tail_bytes = b"X" * tail_len
+
+        # Mock /details
+        mock_details = {
+            "id": test_id,
+            "direct_url": "https://cdn.example.org/valid_video.mp4",
+            "url_generation": 1
+        }
+
+        # Mock GET head (16KB) oraz GET tail
+        head_resp = MagicMock()
+        head_resp.status_code = 206
+        head_resp.headers = {"Content-Range": f"bytes 0-16383/{total_size}"}
+        head_resp.raw.read.return_value = b"H" * 16384
+        head_resp.close = MagicMock()
+
+        tail_resp = MagicMock()
+        tail_resp.status_code = 206
+        tail_resp.headers = {
+            "Content-Range": f"bytes {tail_start}-{tail_end}/{total_size}",
+            "Content-Type": "video/mp4",
+            "ETag": '"etag_good"'
+        }
+        tail_resp.content = valid_tail_bytes
+        tail_resp.close = MagicMock()
+
+        def mock_get(session, url, headers=None, stream=True, timeout=5):
+            rng = headers.get("Range", "")
+            if "0-16383" in rng:
+                return head_resp
+            return tail_resp
+
+        with patch("main._fetch_details_singleflight", return_value=mock_details), \
+             patch("main.is_safe_remote_url", return_value=True), \
+             patch("main._validated_session_get", side_effect=mock_get):
+            client = TestClient(main.app)
+            r = client.post(f"/api/video/warm?id={test_id}")
+            self.assertEqual(r.status_code, 200)
+
+            # Czekamy krótko na zakończenie wątku tła
+            time.sleep(0.15)
+
+            # Cache powinien zawierać wpis tail
+            hit = startup_range_cache.get_range(test_id, url_generation=1, req_start=tail_start)
+            self.assertIsNotNone(hit)
+            self.assertEqual(hit["cache_tag"], "HIT-TAIL")
+            self.assertEqual(len(hit["data"]), tail_len)
+
+    def test_group_A_tail_prefetch_hardening_reject_cases(self):
+        """Grupa A2: Odrzucenie zapisu do RAM przy 200 OK, malformed Content-Range, niezgodnym start/end/total, obciętym lub oversized body."""
+        from unittest.mock import patch, MagicMock
+        from fastapi.testclient import TestClient
+        import main
+        from startup_cache import startup_range_cache, TAIL_CACHE_BYTES
+
+        bad_cases = [
+            # (status_code, content_range_hdr, body_len, name)
+            (200, f"bytes 0-1000/1000", 1000, "status_200_ok"),
+            (206, "malformed_range", 1000, "malformed_cr"),
+            (206, f"bytes 0-500/1000", 501, "wrong_start_cr"),
+            (206, f"bytes 900-950/1000", 51, "wrong_end_cr"),
+            (206, f"bytes {1000000 - TAIL_CACHE_BYTES}-{1000000 - 1}/1000000", TAIL_CACHE_BYTES - 50, "truncated_body"),
+            (206, f"bytes {1000000 - TAIL_CACHE_BYTES}-{1000000 - 1}/1000000", TAIL_CACHE_BYTES + 100, "oversized_body")
+        ]
+
+        for status_code, cr_hdr, body_len, case_name in bad_cases:
+            vid = f"test_bad_{case_name}"
+            startup_range_cache.clear()
+
+            total_size = 1000000
+            mock_details = {"id": vid, "direct_url": "https://cdn.example.org/bad.mp4", "url_generation": 1}
+
+            head_resp = MagicMock()
+            head_resp.status_code = 206
+            head_resp.headers = {"Content-Range": f"bytes 0-16383/{total_size}"}
+            head_resp.raw.read.return_value = b"H" * 16384
+            head_resp.close = MagicMock()
+
+            tail_resp = MagicMock()
+            tail_resp.status_code = status_code
+            tail_resp.headers = {"Content-Range": cr_hdr}
+            tail_resp.content = b"B" * body_len
+            tail_resp.close = MagicMock()
+
+            def mock_get(session, url, headers=None, stream=True, timeout=5):
+                rng = headers.get("Range", "")
+                if "0-16383" in rng:
+                    return head_resp
+                return tail_resp
+
+            with patch("main._fetch_details_singleflight", return_value=mock_details), \
+                 patch("main.is_safe_remote_url", return_value=True), \
+                 patch("main._validated_session_get", side_effect=mock_get):
+                client = TestClient(main.app)
+                client.post(f"/api/video/warm?id={vid}")
+                time.sleep(0.08)
+
+                # Wpis NIE może trafić do cache
+                self.assertIsNone(
+                    startup_range_cache.get_range(vid, url_generation=1, req_start=total_size - TAIL_CACHE_BYTES),
+                    f"Case {case_name} nie powinien zostać zapisany do cache!"
+                )
+                self.assertEqual(startup_range_cache.stats()["entries_count"], 0)
+
+    # --- Grupa B: Cache limits ---
+
+    def test_group_B_cache_limits_rejection_lru_and_ttl(self):
+        """Grupa B: Pojedynczy oversized entry jest odrzucany bez błędów; LRU i TTL działają poprawnie; current_bytes i entries_count są ściśle ograniczone."""
+        from startup_cache import StartupRangeCache, TAIL_CACHE_BYTES
+
+        cache = StartupRangeCache(max_bytes=100 * 1024, max_entries=3, ttl=0.1)
+
+        # 1. Pojedynczy oversized entry (> TAIL_CACHE_BYTES lub > max_bytes) -> natychmiast odrzucony
+        oversized = b"O" * (TAIL_CACHE_BYTES + 1)
+        ok = cache.put_tail("over_1", 1, 500000, 500000 - len(oversized), 499999, oversized)
+        self.assertFalse(ok)
+        self.assertEqual(cache.stats()["entries_count"], 0)
+        self.assertEqual(cache.stats()["current_bytes"], 0)
+
+        # 2. Dodajemy 3 wpisy po 30 KB (łączny rozmiar 90 KB <= 100 KB, liczba 3 <= 3)
+        chunk_30k = b"A" * (30 * 1024)
+        for i in range(1, 4):
+            ok = cache.put_tail(f"vid_{i}", 1, 200000, 200000 - len(chunk_30k), 199999, chunk_30k)
+            self.assertTrue(ok)
+
+        stats = cache.stats()
+        self.assertEqual(stats["entries_count"], 3)
+        self.assertEqual(stats["current_bytes"], 90 * 1024)
+
+        # 3. Dostęp do vid_1 odświeża jego pozycję w LRU (staje się most-recently used)
+        _ = cache.get_range("vid_1", 1, req_start=200000 - len(chunk_30k))
+
+        # 4. Wstawienie vid_4 (30 KB) przekroczy max_entries=3 oraz max_bytes (90+30=120 > 100) -> eksmisja najstarszego vid_2
+        ok = cache.put_tail("vid_4", 1, 200000, 200000 - len(chunk_30k), 199999, chunk_30k)
+        self.assertTrue(ok)
+        self.assertLessEqual(cache.stats()["current_bytes"], cache._max_bytes)
+        self.assertLessEqual(cache.stats()["entries_count"], cache._max_entries)
+
+        # vid_2 powinien być usunięty (LRU), a vid_1 i vid_3/vid_4 zachowane
+        self.assertIsNone(cache.get_range("vid_2", 1, req_start=200000 - len(chunk_30k)))
+        self.assertIsNotNone(cache.get_range("vid_1", 1, req_start=200000 - len(chunk_30k)))
+        self.assertIsNotNone(cache.get_range("vid_4", 1, req_start=200000 - len(chunk_30k)))
+
+        # 5. TTL expiry: czekamy 120 ms (> ttl=100 ms)
+        time.sleep(0.12)
+        expired_hit = cache.get_range("vid_1", 1, req_start=200000 - len(chunk_30k))
+        self.assertIsNone(expired_hit)
+        # Po wygaśnięciu wpis został usunięty
+        self.assertEqual(cache.stats()["entries_count"], 2)  # vid_1 usunięte przy dostępie
+
+    # --- Grupa C: Generation invalidation ---
+
+    def test_group_C_generation_invalidation(self):
+        """Grupa C: url_generation chroni przed serwowaniem przeterminowanych bajtów po 403 lub refreshu URL."""
+        from startup_cache import startup_range_cache
+        startup_range_cache.clear()
+
+        vid = "test_gen_vid"
+        tail_data = b"G" * 1000
+        startup_range_cache.put_tail(
+            video_id=vid,
+            url_generation=1,
+            content_length=50000,
+            tail_start=49000,
+            tail_end=49999,
+            tail_bytes=tail_data
+        )
+
+        # Generacja 1: poprawny HIT-TAIL
+        hit1 = startup_range_cache.get_range(vid, url_generation=1, req_start=49000)
+        self.assertIsNotNone(hit1)
+        self.assertEqual(hit1["cache_tag"], "HIT-TAIL")
+
+        # Generacja 2 (np. po 403 i odświeżeniu URL): MISS i unieważnienie starego wpisu
+        miss = startup_range_cache.get_range(vid, url_generation=2, req_start=49000)
+        self.assertIsNone(miss)
+
+        # Wpis został usunięty z pamięci podręcznej
+        self.assertEqual(startup_range_cache.stats()["entries_count"], 0)
+        self.assertIsNone(startup_range_cache.get_range(vid, url_generation=1, req_start=49000))
+
+    # --- Grupa D: UI zero-flash & backfill ---
+
+    def test_group_D_zero_flash_and_backfill_integrity(self):
+        """Grupa D: Pre-render gate dla UNKNOWN tworzy skeleton bez img.src; appendVideoBatch tworzy skeletony i unika duplikatów."""
+        js = """
+// Mock DOM środowiska przeglądarki
+global.window = global;
+const dom = {
+  videoGrid: {
+    children: [],
+    querySelectorAll: function(sel) {
+      return this.children.filter(c => {
+        if (sel.includes('.video-card') && c.className && c.className.includes('video-card')) return true;
+        if (sel.includes('.skeleton-card') && c.className && c.className.includes('skeleton-card')) return true;
+        return false;
+      });
+    },
+    querySelector: function(sel) {
+      const all = this.querySelectorAll(sel);
+      return all.length > 0 ? all[0] : null;
+    },
+    appendChild: function(node) {
+      if (node.nodeType === 11) { // DocumentFragment
+        node.childNodes.forEach(c => this.children.push(c));
+        node.childNodes = [];
+      } else {
+        this.children.push(node);
+      }
+    },
+    replaceChild: function(newChild, oldChild) {
+      const idx = this.children.indexOf(oldChild);
+      if (idx !== -1) this.children[idx] = newChild;
+    },
+    innerHTML: ''
+  }
+};
+
+global.dom = dom;
+global.document = {
+  createElement: function(tag) {
+    return {
+      tagName: tag.toUpperCase(),
+      className: '',
+      dataset: {},
+      childNodes: [],
+      classList: {
+        add: function(c) { this._classes = this._classes || []; this._classes.push(c); },
+        contains: function(c) { return (this._classes || []).includes(c); }
+      },
+      setAttribute: function(k, v) { this[k] = v; },
+      getAttribute: function(k) { return this[k] || null; },
+      appendChild: function(c) { this.childNodes.push(c); },
+      addEventListener: function() {},
+      remove: function() {
+        const idx = dom.videoGrid.children.indexOf(this);
+        if (idx !== -1) dom.videoGrid.children.splice(idx, 1);
+      },
+      innerHTML: ''
+    };
+  },
+  createDocumentFragment: function() {
+    return {
+      nodeType: 11,
+      childNodes: [],
+      appendChild: function(c) { this.childNodes.push(c); }
+    };
+  }
+};
+
+global.state = { mode: 'home', currentPage: 1 };
+global.updateCheckpointUI = () => {};
+global.checkAndHighlightCheckpoint = () => {};
+
+// Ładujemy renderSkeletonCard, createVideoCard, appendVideoBatch z static/app.js
+const appCode = fs.readFileSync('static/app.js', 'utf8');
+
+// Wyciągamy definicje funkcji renderSkeletonCard, createVideoCard i appendVideoBatch
+eval(`
+${appCode.match(/function renderSkeletonCard[\\s\\S]*?\\n\\}/)[0]}
+function createVideoCard(v, idx) {
+  const card = document.createElement('div');
+  card.className = 'video-card';
+  card.dataset.videoId = String(v.id);
+  const img = document.createElement('img');
+  img.src = v.thumb_url || 'https://img.example.org/thumb.jpg';
+  card.appendChild(img);
+  return card;
+}
+${appCode.match(/function appendVideoBatch[\\s\\S]*?\\n\\}/)[0]}
+`);
+
+// Test 1: renderSkeletonCard nie ma tagu img ani atrybutu src
+const skel = renderSkeletonCard({ id: 'ab_101', title: 'Test 101' }, 0);
+const hasImgSrc = skel.innerHTML.includes('src=') || (skel.querySelector && skel.querySelector('img'));
+
+// Test 2: appendVideoBatch dla UNKNOWN tworzy skeleton-card (zero-flash)
+let validatedBatch = null;
+global._validatePlayabilityBatchGlobal = function(items) {
+  validatedBatch = items.map(it => it.id);
+};
+
+const streamBatch = [
+  { id: 'unknown_v1', title: 'Unknown 1' },
+  { id: 'cw_known_v2', source: 'camwhores', title: 'Camwhores 2' }
+];
+appendVideoBatch(streamBatch);
+
+const cardsAfterAppend = dom.videoGrid.children.map(c => ({
+  className: c.className,
+  videoId: c.dataset.videoId
+}));
+
+// Test 3: Próba dodania duplikatu przez appendVideoBatch zostaje zignorowana
+appendVideoBatch([{ id: 'unknown_v1', title: 'Unknown 1 Duplicate' }]);
+const totalCardsAfterDup = dom.videoGrid.children.length;
+
+console.log(JSON.stringify({
+  hasImgSrc: !!hasImgSrc,
+  cardsAfterAppend,
+  validatedBatch,
+  totalCardsAfterDup
+}));
+"""
+        res = self.run_node_eval(js)
+        self.assertFalse(res["hasImgSrc"], "Skeleton card nie może zawierać atrybutu src!")
+        # cardsAfterAppend: unknown_v1 to skeleton-card, cw_known_v2 to video-card
+        cards = res["cardsAfterAppend"]
+        self.assertEqual(len(cards), 2)
+        self.assertIn("skeleton-card", cards[0]["className"])
+        self.assertEqual(cards[0]["videoId"], "unknown_v1")
+        self.assertIn("video-card", cards[1]["className"])
+        self.assertEqual(cards[1]["videoId"], "cw_known_v2")
+
+        # Walidacja playability została natychmiast wywołana dla unknown_v1
+        self.assertEqual(res["validatedBatch"], ["unknown_v1"])
+
+        # Deduplikacja: duplikat 'unknown_v1' nie został dodany ponownie
+        self.assertEqual(res["totalCardsAfterDup"], 2)
+
+
 if __name__ == "__main__":
     unittest.main()
+
 

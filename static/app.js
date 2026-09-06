@@ -2259,19 +2259,33 @@ async function requestBackfill(neededCount) {
     if (!newItems.length) return;
 
     const fragment = document.createDocumentFragment();
-    const startIdx = dom.videoGrid.children.length;
-    newItems.forEach((v, i) => {
+    const existingDomIds = new Set(
+      Array.from(dom.videoGrid.querySelectorAll('.video-card, .skeleton-card'))
+        .map(el => el.dataset.videoId)
+        .filter(Boolean)
+    );
+    const unknownNew = [];
+    let startIdx = dom.videoGrid.children.length;
+
+    newItems.forEach((v) => {
+      if (!v || !v.id) return;
       const vid = String(v.id);
+      if (existingDomIds.has(vid) || (window._knownDeletedVideos && window._knownDeletedVideos.has(vid))) return;
+      existingDomIds.add(vid);
+
       if (window._knownPlayableVideos && window._knownPlayableVideos.has(vid)) {
-        fragment.appendChild(createVideoCard(v, startIdx + i));
+        fragment.appendChild(createVideoCard(v, startIdx++));
       } else {
-        fragment.appendChild(renderSkeletonCard(v, startIdx + i));
+        fragment.appendChild(renderSkeletonCard(v, startIdx++));
+        unknownNew.push(v);
       }
     });
-    dom.videoGrid.appendChild(fragment);
+
+    if (fragment.childNodes.length > 0) {
+      dom.videoGrid.appendChild(fragment);
+    }
 
     // Waliduj nowe skeletony
-    const unknownNew = newItems.filter(v => !window._knownPlayableVideos || !window._knownPlayableVideos.has(String(v.id)));
     if (unknownNew.length && typeof window._validatePlayabilityBatchGlobal === 'function') {
       window._validatePlayabilityBatchGlobal(unknownNew);
     }
@@ -2437,15 +2451,49 @@ function renderVideoGrid(videos) {
 }
 
 
-// STOPNIOWE DOKŁADANIE KAFELKÓW W CZASIE RZECZYWISTYM ("PO KOLEI")
+// STOPNIOWE DOKŁADANIE KAFELKÓW W CZASIE RZECZYWISTYM ("PO KOLEI") Z ZERO-FLASH GATE
 function appendVideoBatch(videos) {
   if (!videos || videos.length === 0) return;
-  const currentCount = dom.videoGrid.querySelectorAll('.video-card').length;
-  videos.forEach((v, idx) => {
-    const card = createVideoCard(v, currentCount + idx);
+  if (!window._knownDeletedVideos) window._knownDeletedVideos = new Set();
+  if (!window._knownPlayableVideos) window._knownPlayableVideos = new Set();
+
+  const isUserPersonalSection = (state.mode === 'favorites' || state.mode === 'history' || state.mode === 'following');
+  const existingDomIds = new Set(
+    Array.from(dom.videoGrid.querySelectorAll('.video-card, .skeleton-card'))
+      .map(el => el.dataset.videoId)
+      .filter(Boolean)
+  );
+
+  const fragment = document.createDocumentFragment();
+  const unknownNew = [];
+  let currentCount = dom.videoGrid.children.length;
+
+  videos.forEach((v) => {
+    if (!v || !v.id) return;
+    const vid = String(v.id);
+    if (existingDomIds.has(vid) || window._knownDeletedVideos.has(vid)) return;
+    existingDomIds.add(vid);
+
+    const isCw = v.source === 'camwhores' || vid.startsWith('cw_');
+    let card;
+    if (isUserPersonalSection || isCw || window._knownPlayableVideos.has(vid)) {
+      card = createVideoCard(v, currentCount++);
+    } else {
+      card = renderSkeletonCard(v, currentCount++);
+      unknownNew.push(v);
+    }
     card.classList.add('stream-appear');
-    dom.videoGrid.appendChild(card);
+    fragment.appendChild(card);
   });
+
+  if (fragment.childNodes.length > 0) {
+    dom.videoGrid.appendChild(fragment);
+  }
+
+  if (unknownNew.length > 0 && typeof window._validatePlayabilityBatchGlobal === 'function') {
+    window._validatePlayabilityBatchGlobal(unknownNew);
+  }
+
   updateCheckpointUI();
   checkAndHighlightCheckpoint();
 }
