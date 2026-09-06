@@ -1993,6 +1993,250 @@ setTimeout(() => {
         self.assertEqual(res.get("loaderHiddenReason"), "video-error")
 
 
+
+class TestPlayability(unittest.TestCase):
+    """Zestaw testów weryfikujących model odtwarzalności filmów (playability),
+    wykrywanie markerów usunięcia, trwały tombstone cache oraz brak regresji danych użytkownika."""
+
+    def setUp(self):
+        import tempfile
+        from pathlib import Path
+        import playability
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.cache_file = Path(self.temp_dir.name) / "test_playability.json"
+        self.store = playability.PlayabilityStore(cache_file=self.cache_file)
+
+    def tearDown(self):
+        self.temp_dir.cleanup()
+
+    def test_1_html_deleted_marker_detected(self):
+        """Playability Test 1: HTML 'THIS VIDEO HAS BEEN DELETED.' -> status deleted."""
+        from playability import check_html_for_deleted
+        html = "<div><h4>THIS VIDEO HAS BEEN DELETED.</h4></div>"
+        marker = check_html_for_deleted(html)
+        self.assertIsNotNone(marker)
+        self.assertIn("deleted", marker.lower())
+
+    def test_2_case_and_whitespace_variants(self):
+        """Playability Test 2: Różna wielkość liter oraz dodatkowe białe znaki -> deleted."""
+        from playability import check_html_for_deleted
+        html1 = "<p>  this \n\t  video   has   been   deleted  </p>"
+        html2 = "<h1>ThIs ViDeO hAs BeEn DeLeTeD</h1>"
+        html3 = "<span>Video Deleted</span>"
+        self.assertIsNotNone(check_html_for_deleted(html1))
+        self.assertIsNotNone(check_html_for_deleted(html2))
+        self.assertIsNotNone(check_html_for_deleted(html3))
+
+    def test_3_http_404_permanent_deleted(self):
+        """Playability Test 3: HTTP 404 ze strony watch -> status deleted."""
+        from unittest.mock import MagicMock
+        from playability import validate_archivebate_playability, PlayabilityStatus, playability_store
+        mock_resp = MagicMock()
+        mock_resp.status_code = 404
+        mock_session = MagicMock()
+        mock_session.session.get.return_value = mock_resp
+
+        # Używamy unikalnego ID aby nie kolidować
+        test_id = "test_vid_404_abc"
+        res = validate_archivebate_playability(test_id, session=mock_session)
+        self.assertEqual(res, PlayabilityStatus.DELETED)
+        st, _ = playability_store.get_status(test_id)
+        self.assertEqual(st, PlayabilityStatus.DELETED)
+
+    def test_4_http_410_permanent_deleted(self):
+        """Playability Test 4: HTTP 410 -> status deleted."""
+        from unittest.mock import MagicMock
+        from playability import validate_archivebate_playability, PlayabilityStatus
+        mock_resp = MagicMock()
+        mock_resp.status_code = 410
+        mock_session = MagicMock()
+        mock_session.session.get.return_value = mock_resp
+
+        test_id = "test_vid_410_xyz"
+        res = validate_archivebate_playability(test_id, session=mock_session)
+        self.assertEqual(res, PlayabilityStatus.DELETED)
+
+    def test_5_http_500_transient_error(self):
+        """Playability Test 5: HTTP 500 -> transient_error (nie permanent deleted)."""
+        from unittest.mock import MagicMock
+        from playability import validate_archivebate_playability, PlayabilityStatus
+        mock_resp = MagicMock()
+        mock_resp.status_code = 500
+        mock_session = MagicMock()
+        mock_session.session.get.return_value = mock_resp
+
+        test_id = "test_vid_500_srv"
+        res = validate_archivebate_playability(test_id, session=mock_session)
+        self.assertEqual(res, PlayabilityStatus.TRANSIENT_ERROR)
+
+    def test_6_timeout_transient_error(self):
+        """Playability Test 6: Timeout połączenia -> transient_error."""
+        import requests
+        from unittest.mock import MagicMock
+        from playability import validate_archivebate_playability, PlayabilityStatus
+        mock_session = MagicMock()
+        mock_session.session.get.side_effect = requests.exceptions.Timeout("Timeout")
+
+        test_id = "test_vid_timeout_net"
+        res = validate_archivebate_playability(test_id, session=mock_session)
+        self.assertEqual(res, PlayabilityStatus.TRANSIENT_ERROR)
+
+    def test_7_http_403_not_permanent_deleted(self):
+        """Playability Test 7: HTTP 403 (np. Cloudflare/sesja) -> transient_error, NIE deleted."""
+        from unittest.mock import MagicMock
+        from playability import validate_archivebate_playability, PlayabilityStatus
+        mock_resp = MagicMock()
+        mock_resp.status_code = 403
+        mock_session = MagicMock()
+        mock_session.session.get.return_value = mock_resp
+
+        test_id = "test_vid_403_cf"
+        res = validate_archivebate_playability(test_id, session=mock_session)
+        self.assertEqual(res, PlayabilityStatus.TRANSIENT_ERROR)
+        self.assertNotEqual(res, PlayabilityStatus.DELETED)
+
+    def test_8_missing_iframe_without_marker_not_deleted(self):
+        """Playability Test 8: Brak iframe bez markera deleted -> status unknown (nie deleted)."""
+        from unittest.mock import MagicMock
+        from playability import validate_archivebate_playability, PlayabilityStatus
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.text = "<html><body><div>Just some content without video or iframe</div></body></html>"
+        mock_session = MagicMock()
+        mock_session.session.get.return_value = mock_resp
+
+        test_id = "test_vid_no_iframe_unknown"
+        res = validate_archivebate_playability(test_id, session=mock_session)
+        self.assertEqual(res, PlayabilityStatus.UNKNOWN)
+        self.assertNotEqual(res, PlayabilityStatus.DELETED)
+
+    def test_9_deleted_stored_in_persistent_cache(self):
+        """Playability Test 9: Wynik deleted trafia do trwałego pliku cache."""
+        from playability import PlayabilityStatus, PlayabilityStore
+        self.store.set_status("vid_perm_1", PlayabilityStatus.DELETED, reason="test_reason")
+        self.assertTrue(self.cache_file.exists())
+        # Nowa instancja czytająca ten sam plik:
+        store2 = PlayabilityStore(cache_file=self.cache_file)
+        st, entry = store2.get_status("vid_perm_1")
+        self.assertEqual(st, PlayabilityStatus.DELETED)
+        self.assertEqual(entry["reason"], "test_reason")
+
+    def test_10_second_lookup_zero_network_calls(self):
+        """Playability Test 10: Drugi lookup znanego tombstone nie wykonuje zapytań sieciowych."""
+        from unittest.mock import MagicMock
+        from playability import validate_archivebate_playability, playability_store, PlayabilityStatus
+        test_id = "test_vid_zero_net_lookup"
+        playability_store.set_status(test_id, PlayabilityStatus.DELETED, reason="known")
+
+        mock_session = MagicMock()
+        res = validate_archivebate_playability(test_id, session=mock_session)
+        self.assertEqual(res, PlayabilityStatus.DELETED)
+        mock_session.session.get.assert_not_called()
+
+    def test_11_playable_ttl(self):
+        """Playability Test 11: Playable TTL wygasa po zadanym czasie."""
+        import time
+        from playability import PlayabilityStatus
+        self.store.set_status("vid_play_ttl", PlayabilityStatus.PLAYABLE)
+        # Zmodyfikuj czas checked_at na przeszłość > TTL_PLAYABLE (12h)
+        with self.store._lock:
+            self.store._data["vid_play_ttl"]["checked_at"] = time.time() - (13 * 3600)
+        st, _ = self.store.get_status("vid_play_ttl")
+        self.assertEqual(st, PlayabilityStatus.UNKNOWN, "Po wygaśnięciu TTL status powinien być unknown")
+
+    def test_12_transient_ttl_is_short(self):
+        """Playability Test 12: Transient TTL wygasa bardzo szybko (~3 minuty)."""
+        import time
+        from playability import PlayabilityStatus
+        self.store.set_status("vid_trans_ttl", PlayabilityStatus.TRANSIENT_ERROR)
+        with self.store._lock:
+            self.store._data["vid_trans_ttl"]["checked_at"] = time.time() - 200
+        st, _ = self.store.get_status("vid_trans_ttl")
+        self.assertEqual(st, PlayabilityStatus.UNKNOWN)
+
+    def test_13_batch_endpoint_respects_concurrency(self):
+        """Playability Test 13: Endpoint batch weryfikacji działa i zwraca poprawne statusy."""
+        from fastapi.testclient import TestClient
+        from main import app
+        from playability import playability_store, PlayabilityStatus
+        playability_store.set_status("batch_vid_1", PlayabilityStatus.DELETED)
+        playability_store.set_status("batch_vid_2", PlayabilityStatus.PLAYABLE)
+
+        client = TestClient(app)
+        res = client.post("/api/video/playability/batch", json={"ids": ["batch_vid_1", "batch_vid_2"]})
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(data["results"].get("batch_vid_1"), "deleted")
+        self.assertEqual(data["results"].get("batch_vid_2"), "playable")
+
+    def test_14_deleted_card_not_rendered_in_enriched(self):
+        """Playability Test 14: Usunięty film jest odfiltrowany z _enrich_videos."""
+        from main import _enrich_videos
+        from playability import playability_store, PlayabilityStatus
+        playability_store.set_status("dead_vid_99", PlayabilityStatus.DELETED)
+        videos = [
+            {"id": "dead_vid_99", "title": "Dead Video"},
+            {"id": "alive_vid_1", "title": "Alive Video"}
+        ]
+        enriched = _enrich_videos(videos)
+        ids = [v["id"] for v in enriched]
+        self.assertNotIn("dead_vid_99", ids)
+        self.assertIn("alive_vid_1", ids)
+
+    def test_15_deleted_card_replaced_by_next_candidate_in_backfill(self):
+        """Playability Test 15: Bounded backfill uzupełnia brakujące filmy po odfiltrowaniu usuniętych."""
+        from unittest.mock import patch
+        from fastapi.testclient import TestClient
+        from main import app, scraper, HOME_PAGE_SIZE
+        from playability import playability_store, PlayabilityStatus
+
+        # Tworzymy 280 filmów, z czego 10 jest oznaczonych jako deleted
+        for i in range(10):
+            playability_store.set_status(f"del_v_{i}", PlayabilityStatus.DELETED)
+
+        page1_videos = [{"id": f"del_v_{i}", "title": f"Deleted {i}"} for i in range(10)]
+        page1_videos += [{"id": f"good_v_{i}", "title": f"Good {i}"} for i in range(270)]
+        page2_extra = [{"id": f"extra_v_{i}", "title": f"Extra {i}"} for i in range(50)]
+
+        with patch.object(scraper, "get_home_videos", side_effect=lambda page, **kw: page1_videos if page == 1 else page2_extra):
+            client = TestClient(app)
+            res = client.get("/api/videos?page=1&force_refresh=true")
+            self.assertEqual(res.status_code, 200)
+            data = res.json()
+            # Po usunięciu 10 deleted, pobrano z extra 10 i liczba wynosi dokładnie HOME_PAGE_SIZE (280)
+            self.assertEqual(data["count"], HOME_PAGE_SIZE)
+            v_ids = [v["id"] for v in data["videos"]]
+            self.assertNotIn("del_v_0", v_ids)
+            self.assertIn("extra_v_0", v_ids)
+
+    def test_16_favorites_and_history_preserved_even_if_deleted(self):
+        """Playability Test 16: Dane użytkownika w favorites/history NIE są usuwane przy statusie deleted."""
+        from main import _enrich_videos
+        from playability import playability_store, PlayabilityStatus
+        playability_store.set_status("user_fav_dead", PlayabilityStatus.DELETED)
+        user_videos = [{"id": "user_fav_dead", "title": "Favorite Deleted"}]
+
+        # Przy wyświetlaniu ulubionych/historii allow_deleted=True zachowuje rekord
+        res = _enrich_videos(user_videos, allow_deleted=True)
+        self.assertEqual(len(res), 1)
+        self.assertEqual(res[0]["id"], "user_fav_dead")
+
+    def test_17_known_deleted_in_scraper_details_early_exit(self):
+        """Playability Test 17: get_video_details nie odpytuje MixDrop gdy Archivebate zwraca marker deleted."""
+        from unittest.mock import MagicMock, patch
+        from main import scraper
+        mock_watch_resp = MagicMock()
+        mock_watch_resp.status_code = 200
+        mock_watch_resp.text = "<html><body><h4>THIS VIDEO HAS BEEN DELETED.</h4></body></html>"
+
+        with patch.object(scraper.session.session, "get", return_value=mock_watch_resp) as mock_get:
+            details = scraper.get_video_details("test_early_deleted_id")
+            self.assertTrue(details.get("is_deleted"))
+            self.assertEqual(details.get("playability_status"), "deleted")
+            # Wykonano dokładnie 1 zapytanie (watch), a nie odpytywano MixDrop embed!
+            self.assertEqual(mock_get.call_count, 1)
+
+
 if __name__ == "__main__":
     unittest.main()
 

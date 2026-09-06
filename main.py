@@ -29,6 +29,7 @@ from cache_store import (
     is_safe_remote_url, trim_cache_directory, SafeHTTPAdapter, SSRFSecurityError,
 )
 from storyboard_service import start as start_storyboard, get_status as get_storyboard_status, sprite_path as get_storyboard_sprite_path
+from playability import playability_store, PlayabilityStatus, validate_archivebate_playability
 
 # Dane logowania nie są już zapisane w kodzie źródłowym.
 _archivebate_email, _archivebate_password = get_archivebate_credentials()
@@ -133,9 +134,18 @@ STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 os.makedirs(STATIC_DIR, exist_ok=True)
 app.mount("/static", OptimizedStaticFiles(directory=STATIC_DIR), name="static")
 
-def _enrich_videos(videos: list, author_filter: str = "all") -> list:
-    """Dodaje flagę is_favorite, usuwa wszelkie duplikaty oraz filtruje zablokowane profile z całego programu."""
+def _enrich_videos(videos: list, author_filter: str = "all", allow_deleted: bool = False) -> list:
+    """Dodaje flagę is_favorite, usuwa wszelkie duplikaty oraz filtruje zablokowane profile z całego programu.
+    Odfiltrowuje także trwale usunięte wideo (chyba że allow_deleted=True, np. dla danych użytkownika)."""
     videos = deduplicate_videos(videos)
+
+    if not allow_deleted:
+        deleted_ids = playability_store.get_all_deleted_ids()
+        if deleted_ids:
+            videos = [
+                v for v in videos
+                if isinstance(v, dict) and str(v.get("id", "")).split("/")[-1].split("?")[0].strip() not in deleted_ids
+            ]
 
     blocked_set = storage._blocked_norm_set
     if blocked_set:
@@ -412,7 +422,7 @@ def get_account_favorites(page: int = Query(1, ge=1), per_page: int = Query(280,
         "page": page,
         "last_page": last_page,
         "count": len(sliced),
-        "videos": _enrich_videos(sliced)
+        "videos": _enrich_videos(sliced, allow_deleted=True)
     }
 
 @app.post("/api/account/favorites/toggle")
@@ -456,7 +466,7 @@ def get_account_history(page: int = Query(1, ge=1), per_page: int = Query(280, g
         "page": page,
         "last_page": last_page,
         "count": len(sliced),
-        "videos": _enrich_videos(sliced)
+        "videos": _enrich_videos(sliced, allow_deleted=True)
     }
 
 @app.post("/api/account/history/record")
@@ -489,7 +499,7 @@ def get_account_following(page: int = Query(1, ge=1), per_page: int = Query(280,
         "page": page,
         "last_page": last_page,
         "count": len(sliced),
-        "videos": _enrich_videos(sliced)
+        "videos": _enrich_videos(sliced, allow_deleted=True)
     }
 
 @app.post("/api/account/sync")
@@ -637,22 +647,26 @@ def get_videos(
 
     enriched = _enrich_videos(raw_videos, author_filter=author_filter)
 
-    # Zabezpieczenie: jeśli po usunięciu zablokowanych profili liczba spadnie poniżej 280, dociągamy brakujące wideo
+    # Zabezpieczenie: jeśli po usunięciu usuniętych filmów / zablokowanych profili liczba spadnie poniżej 280,
+    # dociągamy brakujące wideo (bounded backfill, max 3 dodatkowe strony, bez nieskończonej pętli)
     if len(enriched) < HOME_PAGE_SIZE and author_filter != "only_fav":
-        extra_videos = scraper.get_home_videos(
-            page=page + 1,
-            source=source,
-            author_filter=author_filter,
-            target_count=HOME_PAGE_SIZE
-        )
-        if extra_videos:
-            from camwhores import deduplicate_videos
-            combined = deduplicate_videos(raw_videos + extra_videos)
-            enriched = _enrich_videos(combined, author_filter=author_filter)
-            try:
-                atomic_write_json(cache_path, combined[:HOME_PAGE_SIZE + 50])
-            except Exception:
-                pass
+        current_combined = list(raw_videos)
+        for offset_p in range(1, 4):
+            if len(enriched) >= HOME_PAGE_SIZE:
+                break
+            extra_videos = scraper.get_home_videos(
+                page=page + offset_p,
+                source=source,
+                author_filter=author_filter,
+                target_count=HOME_PAGE_SIZE
+            )
+            if extra_videos:
+                current_combined = deduplicate_videos(current_combined + extra_videos)
+                enriched = _enrich_videos(current_combined, author_filter=author_filter)
+        try:
+            atomic_write_json(cache_path, current_combined[:HOME_PAGE_SIZE + 50])
+        except Exception:
+            pass
 
     final_videos = enriched[:HOME_PAGE_SIZE]
 
@@ -1068,6 +1082,106 @@ def storyboard_image(id: str = Query(..., min_length=1), q: str = Query("best"))
         media_type="image/jpeg",
         headers={"Cache-Control": "public, max-age=31536000, immutable"},
     )
+
+
+@app.post("/api/video/playability/batch")
+def check_playability_batch(payload: dict = Body(...)):
+    """Weryfikuje status odtwarzalności listy filmów z kontrolowaną współbieżnością (max 50 ID, pool 6)."""
+    ids = payload.get("ids", []) if isinstance(payload, dict) else []
+    if not isinstance(ids, list):
+        raise HTTPException(status_code=400, detail="Oczekiwano listy identyfikatorów 'ids'")
+
+    # Limit max 50 ID na żądanie
+    ids = ids[:50]
+    results = {}
+    ids_to_validate = []
+
+    for vid in ids:
+        clean_vid = str(vid).split("/")[-1].split("?")[0].strip()
+        if not clean_vid:
+            continue
+        status, _ = playability_store.get_status(clean_vid)
+        if status != PlayabilityStatus.UNKNOWN:
+            results[clean_vid] = status.value
+        else:
+            ids_to_validate.append(clean_vid)
+
+    if ids_to_validate:
+        workers = min(6, len(ids_to_validate))
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            future_to_id = {
+                executor.submit(validate_archivebate_playability, vid, session): vid
+                for vid in ids_to_validate
+            }
+            for fut in as_completed(future_to_id):
+                vid = future_to_id[fut]
+                try:
+                    res_status = fut.result()
+                    results[vid] = res_status.value
+                except Exception as e:
+                    results[vid] = PlayabilityStatus.TRANSIENT_ERROR.value
+
+    return {"results": results}
+
+
+_warm_inflight_lock = threading.Lock()
+_warm_inflight = set()
+_warm_limiter = threading.Semaphore(2)
+
+@app.post("/api/video/warm")
+def warm_video_stream(id: str = Query(..., min_length=1)):
+    """Pre-rozgrzewa połączenie TCP/TLS/CDN do streamu wideo na podstawie hover (concurrency max 2, single-flight)."""
+    clean_id = str(id).split("/")[-1].split("?")[0].strip()
+    if not clean_id:
+        return {"status": "skipped", "reason": "empty_id"}
+
+    with _warm_inflight_lock:
+        if clean_id in _warm_inflight:
+            return {"status": "in_flight"}
+        if len(_warm_inflight) >= 4:
+            return {"status": "busy"}
+        _warm_inflight.add(clean_id)
+
+    def worker():
+        try:
+            if not _warm_limiter.acquire(blocking=False):
+                return
+            try:
+                details = _fetch_details_singleflight(clean_id)
+                if not isinstance(details, dict):
+                    return
+                direct_url = details.get("direct_url")
+                embed_url = details.get("embed_url")
+                if not direct_url or not is_safe_remote_url(direct_url):
+                    return
+
+                referer = embed_url or ("https://www.camwhores.tv/" if "camwhores" in direct_url else "https://mixdrop.ag/")
+                headers = {
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+                    "Referer": referer,
+                    "Range": "bytes=0-16383"
+                }
+                active_session = stream_session
+                if hasattr(scraper, "session") and hasattr(scraper.session, "session") and scraper.session.session.cookies:
+                    try:
+                        active_session.cookies.update(scraper.session.session.cookies)
+                    except Exception:
+                        pass
+
+                r = _validated_session_get(active_session, direct_url, headers=headers, stream=True, timeout=5)
+                # Czytamy mały bufor 16 KB i natychmiast zwalniamy połączenie do connection poola:
+                _ = r.raw.read(16384)
+                r.close()
+            finally:
+                _warm_limiter.release()
+        except Exception:
+            pass
+        finally:
+            with _warm_inflight_lock:
+                _warm_inflight.discard(clean_id)
+
+    threading.Thread(target=worker, daemon=True).start()
+    return {"status": "warming", "id": clean_id}
 
 @app.post("/api/scan/start")
 def start_quick_scan():

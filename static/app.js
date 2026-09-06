@@ -2099,15 +2099,18 @@ function createVideoCard(v, idx) {
   }
 
   let hoverPreviewTimer = null;
+  let warmStreamTimer = null;
 
   function scheduleVideoPreview() {
     if (timelinePrefix) return; // Camwhores korzysta ze storyboardu klatek, nie potrzebuje streamu wideo!
     clearTimeout(hoverPreviewTimer);
+    // B5: Opóźniamy start pobierania wideo preview do 600 ms stabilnego hovera,
+    // aby przelotny ruch kursora nie obciążał łącza.
     hoverPreviewTimer = setTimeout(() => {
       if (isHovered) {
         startVideoPreview();
       }
-    }, 1100);
+    }, 600);
   }
 
   thumbWrapper.addEventListener('mouseenter', (e) => {
@@ -2127,6 +2130,13 @@ function createVideoCard(v, idx) {
           }, 1500);
         }
       }
+      // B7: Connection prewarm po 250 ms stabilnego hover
+      clearTimeout(warmStreamTimer);
+      warmStreamTimer = setTimeout(() => {
+        if (isHovered && v.id) {
+          fetch(`/api/video/warm?id=${encodeURIComponent(v.id)}`, { method: 'POST' }).catch(() => {});
+        }
+      }, 250);
     }
     scheduleVideoPreview();
 
@@ -2146,30 +2156,37 @@ function createVideoCard(v, idx) {
     doSeek(pos);
   });
 
-  thumbWrapper.addEventListener('mouseleave', () => {
+  const abortHoverMedia = () => {
     isHovered = false;
     pendingPos = null;
     clearTimeout(hoverPreviewTimer);
     clearTimeout(hoverSeekTimer);
     clearTimeout(storyboardWarmTimer);
+    clearTimeout(warmStreamTimer);
     isSeekingHover = false;
     if (hoverVideo) {
-      hoverVideo.pause();
-      hoverVideo.currentTime = 0;
-      hoverVideo.style.opacity = '0';
-      // Natychmiastowe odcięcie połączenia w tle, aby nie blokować pasma internetu!
-      hoverVideo.removeAttribute('src');
-      hoverVideo.load();
+      try {
+        hoverVideo.pause();
+        hoverVideo.currentTime = 0;
+        hoverVideo.style.opacity = '0';
+        hoverVideo.removeAttribute('src');
+        hoverVideo.load();
+      } catch (_) {}
     }
     if (hoverFrame) hoverFrame.style.display = 'none';
+  };
+
+  thumbWrapper.addEventListener('mouseleave', () => {
+    abortHoverMedia();
     if (scrubProgress) scrubProgress.style.width = '0%';
     if (scrubThumb) scrubThumb.style.left = '0%';
     if (scrubTooltip) scrubTooltip.style.display = 'none';
   });
 
-  // Zdarzenia kliknięć obsługiwane są wydajnie przez delegację na dom.videoGrid
+  // B4: Na kliknięcie (pointerdown) natychmiast anuluj media preview dla tego card,
+  // aby pełny film miał priorytet i nie konkurował o pasmo z podglądem hovera.
   thumbWrapper.addEventListener('pointerdown', (e) => {
-    if (e.button === 0) clearTimeout(hoverPreviewTimer);
+    abortHoverMedia();
   }, { passive: true });
 
   let cardPrefetchTimer = null;
@@ -2192,6 +2209,7 @@ function createVideoCard(v, idx) {
       clearTimeout(cardPrefetchTimer);
       cardPrefetchTimer = null;
     }
+    abortHoverMedia();
     prefetchVideoDetails(v.id);
   }, { passive: true });
 
@@ -2237,6 +2255,11 @@ function renderVideoGrid(videos) {
 
   videos = deduplicateVideos(videos);
 
+  // Filtrujemy filmy znane z pamięci podręcznej jako usunięte
+  if (window._knownDeletedVideos && window._knownDeletedVideos.size > 0) {
+    videos = videos.filter(v => v && v.id && !window._knownDeletedVideos.has(String(v.id)));
+  }
+
   const INITIAL_BATCH = 32;
   const CHUNK_SIZE = 32;
   const initial = videos.slice(0, INITIAL_BATCH);
@@ -2245,6 +2268,33 @@ function renderVideoGrid(videos) {
   initial.forEach((v, idx) => firstFragment.appendChild(createVideoCard(v, idx)));
   dom.videoGrid.appendChild(firstFragment);
   updateCheckpointUI();
+
+  // A8/A9: Walidujemy odtwarzalność partiami w tle (batch validation)
+  const validatePlayabilityBatch = (items) => {
+    if (!items || !items.length) return;
+    const ids = items.map(v => v.id).filter(id => id && !String(id).startsWith('cw_') && (!window._knownDeletedVideos || !window._knownDeletedVideos.has(String(id))));
+    if (!ids.length) return;
+    fetch('/api/video/playability/batch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids: ids.slice(0, 50) })
+    }).then(r => r.json()).then(data => {
+      if (data && data.results) {
+        if (!window._knownDeletedVideos) window._knownDeletedVideos = new Set();
+        Object.entries(data.results).forEach(([id, status]) => {
+          if (status === 'deleted' || status === 'unavailable') {
+            window._knownDeletedVideos.add(String(id));
+            const cardEl = dom.videoGrid.querySelector(`[data-video-id="${id}"]`);
+            if (cardEl) {
+              cardEl.remove();
+            }
+          }
+        });
+      }
+    }).catch(() => {});
+  };
+
+  validatePlayabilityBatch(initial);
   checkAndHighlightCheckpoint();
 
   let cursor = INITIAL_BATCH;
@@ -2252,11 +2302,13 @@ function renderVideoGrid(videos) {
     if (cursor >= videos.length) return;
     const end = Math.min(cursor + CHUNK_SIZE, videos.length);
     const fragment = document.createDocumentFragment();
+    const currentItems = videos.slice(cursor, end);
     for (let i = cursor; i < end; i += 1) {
       fragment.appendChild(createVideoCard(videos[i], i));
     }
     dom.videoGrid.appendChild(fragment);
     cursor = end;
+    validatePlayabilityBatch(currentItems);
 
     if (cursor < videos.length) {
       if ('requestIdleCallback' in window) {
@@ -2582,6 +2634,20 @@ async function openVideoModal(video) {
     state.currentVideoDetails = { ...video, ...details };
 
     updateModalFavButton(!!details.is_favorite);
+
+    if (details.is_deleted || details.playability_status === 'deleted') {
+      dom.modalVideo.pause();
+      dom.modalVideo.removeAttribute('src');
+      dom.modalVideo.load();
+      showModalVideoError('Ten film został usunięty z serwisu.');
+      // Usuń kafelek z bieżącej siatki (A12)
+      if (video?.id) {
+        const cardEl = dom.videoGrid.querySelector(`[data-video-id="${video.id}"]`);
+        if (cardEl) cardEl.remove();
+      }
+      dom.modalKeywords.innerHTML = '<div style="color: #f87171; font-weight: 600; padding: 6px 0;"><i class="fa-solid fa-trash-can"></i> Ten film został trwale usunięty ze źródła.</div>';
+      return;
+    }
 
     if (details.is_private) {
       dom.modalVideo.pause();

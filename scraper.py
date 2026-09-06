@@ -979,7 +979,51 @@ class ArchivebateScraper:
 
         try:
             r = self.session.session.get(url, timeout=12)
+            if r.status_code in (404, 410):
+                try:
+                    from playability import playability_store, PlayabilityStatus
+                    playability_store.set_status(clean_id, PlayabilityStatus.DELETED, reason=f"http_{r.status_code}")
+                except Exception:
+                    pass
+                return {
+                    "url": url,
+                    "embed_url": "",
+                    "direct_url": "",
+                    "download_url": "",
+                    "thumbnail": "",
+                    "preview_video": "",
+                    "username": "Model",
+                    "date": "",
+                    "keywords": [],
+                    "description": "This video has been deleted.",
+                    "is_deleted": True,
+                    "playability_status": "deleted"
+                }
+
             html = r.text
+
+            # Sprawdź czy strona jednoznacznie zgłasza usunięcie filmu (A3 & A4)
+            try:
+                from playability import check_html_for_deleted, playability_store, PlayabilityStatus
+                marker = check_html_for_deleted(html)
+                if marker:
+                    playability_store.set_status(clean_id, PlayabilityStatus.DELETED, reason=f"marker_{marker}")
+                    return {
+                        "url": url,
+                        "embed_url": "",
+                        "direct_url": "",
+                        "download_url": "",
+                        "thumbnail": "",
+                        "preview_video": "",
+                        "username": "Model",
+                        "date": "",
+                        "keywords": [],
+                        "description": "This video has been deleted.",
+                        "is_deleted": True,
+                        "playability_status": "deleted"
+                    }
+            except Exception:
+                pass
 
             # Mixdrop iframe
             iframe_m = re.search(r'<iframe[^>]*src="([^"]+)"', html)
