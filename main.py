@@ -994,7 +994,7 @@ def stream_video_proxy(url: str = Query(None), id: str = Query(None), embed: str
 
         t_total = (time.perf_counter() - t_start) * 1000
         if (request and request.headers.get("x-debug-perf") == "1") or os.environ.get("ARCHIVEBATE_DEBUG_PERF") == "1":
-            print(f"[STREAM PERF] id={clean_id or 'url'} details_cache={t_details_cache:.1f}ms upstream_connect={t_upstream_connect:.1f}ms recovery_403={t_recovery_403:.1f}ms response_ready={t_total:.1f}ms")
+            print(f"[STREAM PERF] id={clean_id or 'url'} details_cache={t_details_cache:.1f}ms upstream_connect={t_upstream_connect:.1f}ms recovery_403={t_recovery_403:.1f}ms response_ready={t_total:.1f}ms range={range_header or 'none'}")
 
         if req.status_code not in (200, 206):
             code = req.status_code
@@ -1016,13 +1016,22 @@ def stream_video_proxy(url: str = Query(None), id: str = Query(None), embed: str
             response_headers["Last-Modified"] = req.headers["Last-Modified"]
 
         def iterfile():
+            first_yield = True
+            t_first_yield = None
             try:
+                # Wariant B: pierwszy yield 16 KB dla natychmiastowego zaspokojenia ftyp atomu
+                # i obniżenia TTFB odtwarzacza, a kolejne chunks 64 KB dla pełnej przepustowości.
+                first_chunk = req.raw.read(16 * 1024)
+                if first_chunk:
+                    t_first_yield = (time.perf_counter() - t_start) * 1000
+                    if (request and request.headers.get("x-debug-perf") == "1") or os.environ.get("ARCHIVEBATE_DEBUG_PERF") == "1":
+                        print(f"[STREAM PERF] id={clean_id or 'url'} first_proxy_yield={t_first_yield:.1f}ms")
+                    yield first_chunk
+
                 for chunk in req.iter_content(chunk_size=1024 * 64):
                     if chunk:
                         yield chunk
             except Exception as e:
-                # Nie połykamy wyjątku milcząco; logujemy bez ujawniania tokenów i re-raise,
-                # aby serwer ASGI zerwał połączenie TCP informując klienta o ucięciu strumienia.
                 import logging
                 logging.getLogger("proxy_stream").warning(f"Przerwano strumień wideo {clean_id}: {type(e).__name__}")
                 raise

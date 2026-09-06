@@ -721,7 +721,8 @@ class TestVideoStartupOptimization(unittest.TestCase):
             mock_resp = MagicMock()
             mock_resp.status_code = 200
             mock_resp.headers = {"Content-Type": "video/mp4", "Accept-Ranges": "bytes"}
-            mock_resp.iter_content.return_value = [b"video_data"]
+            mock_resp.raw.read.return_value = b"video_data"
+            mock_resp.iter_content.return_value = []
             mock_resp.close = MagicMock()
             mock_get.return_value = mock_resp
 
@@ -794,6 +795,7 @@ class TestVideoStartupOptimization(unittest.TestCase):
             if url == expired_url:
                 resp.status_code = 403
                 resp.headers = {}
+                resp.raw.read.return_value = b""
                 resp.iter_content.return_value = []
                 resp.close = MagicMock()
             else:
@@ -804,7 +806,8 @@ class TestVideoStartupOptimization(unittest.TestCase):
                     "Content-Length": "101",
                     "Accept-Ranges": "bytes"
                 }
-                resp.iter_content.return_value = [b"stream_chunk_after_403"]
+                resp.raw.read.return_value = b"stream_chunk_after_403"
+                resp.iter_content.return_value = []
                 resp.close = MagicMock()
             return resp
 
@@ -862,6 +865,7 @@ class TestVideoStartupOptimization(unittest.TestCase):
             if url == expired_url:
                 resp.status_code = 403
                 resp.headers = {}
+                resp.raw.read.return_value = b""
                 resp.iter_content.return_value = []
                 resp.close = MagicMock()
             else:
@@ -872,7 +876,8 @@ class TestVideoStartupOptimization(unittest.TestCase):
                     "Content-Length": "1025",
                     "Accept-Ranges": "bytes"
                 }
-                resp.iter_content.return_value = [b"chunk_range"]
+                resp.raw.read.return_value = b"chunk_range"
+                resp.iter_content.return_value = []
                 resp.close = MagicMock()
             return resp
 
@@ -909,7 +914,8 @@ class TestVideoStartupOptimization(unittest.TestCase):
             "Content-Length": "500",
             "Accept-Ranges": "bytes"
         }
-        mock_resp.iter_content.return_value = [b"x" * 500]
+        mock_resp.raw.read.return_value = b"x" * 500
+        mock_resp.iter_content.return_value = []
         mock_resp.close = MagicMock()
 
         with patch("main.is_safe_remote_url", return_value=True), \
@@ -942,12 +948,14 @@ class TestVideoStartupOptimization(unittest.TestCase):
             if url == expired_url:
                 resp.status_code = 403
                 resp.headers = {}
+                resp.raw.read.return_value = b""
                 resp.iter_content.return_value = []
                 resp.close = MagicMock()
             else:
                 resp.status_code = 200
                 resp.headers = {"Content-Type": "video/mp4", "Accept-Ranges": "bytes"}
-                resp.iter_content.return_value = [b"stream"]
+                resp.raw.read.return_value = b"stream"
+                resp.iter_content.return_value = []
                 resp.close = MagicMock()
             return resp
 

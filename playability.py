@@ -142,7 +142,11 @@ _DELETED_TEXT_PATTERNS = [
 def check_html_for_deleted(html: str) -> Optional[str]:
     if not html:
         return None
-    clean_text = re.sub(r'<[^>]+>', ' ', html)
+    # Usuwamy sekcje zgłaszania/report modal i formularze, gdzie "Video deleted" występuje jako opcja w ankiecie/radiobuttonie
+    filtered_html = re.sub(r'<div[^>]*class="[^"]*modal[^"]*"[\s\S]*?</div>\s*</div>\s*</div>', ' ', html, flags=re.IGNORECASE)
+    filtered_html = re.sub(r'<form[\s\S]*?</form>', ' ', filtered_html, flags=re.IGNORECASE)
+    filtered_html = re.sub(r'<label[^>]*for="[^"]*deleted[^"]*"[\s\S]*?</label>', ' ', filtered_html, flags=re.IGNORECASE)
+    clean_text = re.sub(r'<[^>]+>', ' ', filtered_html)
     clean_text = ' '.join(clean_text.split())
     for pat in _DELETED_TEXT_PATTERNS:
         m = pat.search(clean_text)

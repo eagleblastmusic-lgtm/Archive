@@ -29,6 +29,15 @@ BENCHMARK_PORT = 8008
 BASE_URL = f"http://127.0.0.1:{BENCHMARK_PORT}"
 
 def start_server():
+    # Check if server is already running
+    try:
+        with urllib.request.urlopen(f"{BASE_URL}/api/status", timeout=2) as r:
+            if r.getcode() == 200:
+                print(f"Benchmark server already running on port {BENCHMARK_PORT}.")
+                return None
+    except Exception:
+        pass
+
     print(f"Starting benchmark server on port {BENCHMARK_PORT}...")
     proc = subprocess.Popen(
         [sys.executable, "-m", "uvicorn", "main:app", "--host", "127.0.0.1", "--port", str(BENCHMARK_PORT), "--log-level", "warning"],
@@ -48,16 +57,54 @@ def start_server():
             time.sleep(0.3)
     raise RuntimeError("Failed to start benchmark server within 15s")
 
+def _verify_playable(video_id: str) -> bool:
+    """Check if a video is actually playable (has direct_url and is not deleted)."""
+    try:
+        url = f"{BASE_URL}/api/video/details?id={urllib.parse.quote(str(video_id))}"
+        with urllib.request.urlopen(url, timeout=10) as r:
+            data = json.loads(r.read().decode("utf-8"))
+        if data.get("is_deleted") or data.get("deleted"):
+            return False
+        if not data.get("direct_url"):
+            return False
+        return True
+    except Exception:
+        return False
+
+
 def get_clean_video_ids():
     req_ab = urllib.request.Request(f"{BASE_URL}/api/videos?page=1&source=only-archivebate")
-    with urllib.request.urlopen(req_ab, timeout=10) as r:
+    with urllib.request.urlopen(req_ab, timeout=60) as r:
         data_ab = json.loads(r.read().decode("utf-8"))
-    ab_vids = [v["id"] for v in data_ab.get("videos", []) if not str(v["id"]).startswith("cw_")]
+    ab_candidates = [v["id"] for v in data_ab.get("videos", []) if not str(v["id"]).startswith("cw_")]
+
+    # Verify playability — the feed cache may contain deleted videos not yet filtered
+    ab_vids = []
+    for vid in ab_candidates[:30]:  # check up to 30 candidates
+        if _verify_playable(vid):
+            ab_vids.append(vid)
+            break
+    if not ab_vids:
+        print("None of the top feed candidates playable, checking known playable ID 16440387...")
+        if _verify_playable("16440387"):
+            ab_vids.append("16440387")
+        else:
+            print("WARNING: Fallback 16440387 is also not playable!")
 
     req_cw = urllib.request.Request(f"{BASE_URL}/api/videos?page=1&source=only-camwhores")
-    with urllib.request.urlopen(req_cw, timeout=10) as r:
+    with urllib.request.urlopen(req_cw, timeout=60) as r:
         data_cw = json.loads(r.read().decode("utf-8"))
-    cw_vids = [v["id"] for v in data_cw.get("videos", []) if str(v["id"]).startswith("cw_") or "camwhores" in str(v.get("url", ""))]
+    cw_candidates = [v["id"] for v in data_cw.get("videos", []) if str(v["id"]).startswith("cw_") or "camwhores" in str(v.get("url", ""))]
+
+    cw_vids = []
+    for vid in cw_candidates[:10]:
+        if _verify_playable(vid):
+            cw_vids.append(vid)
+            break
+    if not cw_vids and cw_candidates:
+        # Camwhores are usually more reliable, use first anyway
+        cw_vids = [cw_candidates[0]]
+
     return ab_vids, cw_vids
 
 def clear_video_cache(video_id: str):
@@ -237,11 +284,18 @@ def measure_run_modal(browser, video_id: str, mode: str = "cold", timeout_sec: f
     page.on("response", handle_resp)
 
     page.goto(f"{BASE_URL}/")
-    page.wait_for_selector(f".video-card[data-video-id='{video_id}']", timeout=12000)
-
-    card = page.query_selector(f".video-card[data-video-id='{video_id}']")
-    if not card:
+    # Try to find the specific card; fall back to any visible card if deleted/filtered
+    try:
+        page.wait_for_selector(f".video-card[data-video-id='{video_id}']", timeout=8000)
+        card = page.query_selector(f".video-card[data-video-id='{video_id}']")
+    except Exception:
+        page.wait_for_selector(".video-card", timeout=8000)
         card = page.query_selector(".video-card")
+        if card:
+            fallback_id = card.get_attribute("data-video-id")
+            if fallback_id:
+                print(f"    [modal] Card for {video_id} not found, using fallback {fallback_id}")
+                video_id = fallback_id
 
     if mode == "hover-prefetch":
         thumb = card.query_selector(".thumbnail-wrapper")
@@ -381,7 +435,7 @@ def run_benchmarks():
         print(f"Selected Archivebate ID: {test_ab_id}")
         print(f"Selected Camwhores ID: {test_cw_id}")
 
-        iterations = 5
+        iterations = 7
         scenarios = [
             ("Archivebate Cold (/watch)", "watch", test_ab_id, True, "cold"),
             ("Archivebate Warm (/watch)", "watch", test_ab_id, False, "warm"),
@@ -577,12 +631,15 @@ def run_benchmarks():
             else:
                 print(f"{label:<36}: No valid frames measured")
     finally:
-        print("\nTerminating benchmark server...")
-        server_proc.terminate()
-        try:
-            server_proc.wait(timeout=5)
-        except Exception:
-            server_proc.kill()
+        if server_proc:
+            print("\nTerminating benchmark server...")
+            server_proc.terminate()
+            try:
+                server_proc.wait(timeout=5)
+            except Exception:
+                server_proc.kill()
+        else:
+            print("\nBenchmark server was external — not terminating.")
 
 if __name__ == "__main__":
     run_benchmarks()
