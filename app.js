@@ -2216,6 +2216,72 @@ function createVideoCard(v, idx) {
   return card;
 }
 
+// Pre-Render Gate: neutralny skeleton card bez atrybutu img src
+function renderSkeletonCard(v, idx) {
+  const card = document.createElement('div');
+  card.className = 'skeleton-card';
+  card.dataset.videoId = String(v.id);
+  card._videoData = v;
+  card.innerHTML = `
+    <div class="skeleton-thumb"></div>
+    <div class="skeleton-details">
+      <div class="skeleton-line title"></div>
+      <div class="skeleton-line tags"></div>
+      <div class="skeleton-line actions"></div>
+    </div>
+  `;
+  return card;
+}
+
+// Bounded Dynamic Backfill: uzupełnia brakujące kafelki w siatce po usunięciu martwych
+let isBackfilling = false;
+async function requestBackfill(neededCount) {
+  if (isBackfilling || neededCount <= 0) return;
+  if (state.mode !== 'home') return;
+  isBackfilling = true;
+  try {
+    const visibleCards = Array.from(dom.videoGrid.querySelectorAll('.video-card, .skeleton-card'));
+    const currentExcludeIds = visibleCards.map(c => c.dataset.videoId).filter(Boolean);
+    const res = await fetch('/api/videos/backfill', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        page: state.currentPage,
+        source: state.sourceFilter || 'all',
+        author_filter: state.authorFilter || 'all',
+        exclude_ids: currentExcludeIds,
+        needed: Math.min(neededCount, 30)
+      })
+    });
+    if (!res.ok) return;
+    const data = await res.json();
+    const newItems = data.videos || [];
+    if (!newItems.length) return;
+
+    const fragment = document.createDocumentFragment();
+    const startIdx = dom.videoGrid.children.length;
+    newItems.forEach((v, i) => {
+      const vid = String(v.id);
+      if (window._knownPlayableVideos && window._knownPlayableVideos.has(vid)) {
+        fragment.appendChild(createVideoCard(v, startIdx + i));
+      } else {
+        fragment.appendChild(renderSkeletonCard(v, startIdx + i));
+      }
+    });
+    dom.videoGrid.appendChild(fragment);
+
+    // Waliduj nowe skeletony
+    const unknownNew = newItems.filter(v => !window._knownPlayableVideos || !window._knownPlayableVideos.has(String(v.id)));
+    if (unknownNew.length && typeof window._validatePlayabilityBatchGlobal === 'function') {
+      window._validatePlayabilityBatchGlobal(unknownNew);
+    }
+  } catch (err) {
+    console.error('Błąd dynamicznego backfillu:', err);
+  } finally {
+    isBackfilling = false;
+  }
+}
+
 // ELIMINACJA DUPLIKATÓW
 function deduplicateVideos(videos) {
   if (!videos || !Array.isArray(videos)) return [];
@@ -2246,8 +2312,7 @@ function deduplicateVideos(videos) {
   return result;
 }
 
-// RENDEROWANIE KAFELKÓW: pierwszy ekran natychmiast, reszta w małych porcjach
-// w czasie bezczynności. Dzięki temu setki kart nie blokują głównego wątku naraz.
+// RENDEROWANIE KAFELKÓW Z PRE-RENDER GATE
 function renderVideoGrid(videos) {
   dom.videoGrid.innerHTML = '';
   state.videoById.clear();
@@ -2260,39 +2325,79 @@ function renderVideoGrid(videos) {
     videos = videos.filter(v => v && v.id && !window._knownDeletedVideos.has(String(v.id)));
   }
 
-  const INITIAL_BATCH = 32;
-  const CHUNK_SIZE = 32;
-  const initial = videos.slice(0, INITIAL_BATCH);
-  const firstFragment = document.createDocumentFragment();
+  if (!window._knownDeletedVideos) window._knownDeletedVideos = new Set();
+  if (!window._knownPlayableVideos) window._knownPlayableVideos = new Set();
 
-  initial.forEach((v, idx) => firstFragment.appendChild(createVideoCard(v, idx)));
-  dom.videoGrid.appendChild(firstFragment);
-  updateCheckpointUI();
+  const isUserPersonalSection = (state.mode === 'favorites' || state.mode === 'history' || state.mode === 'following');
 
-  // A8/A9: Walidujemy odtwarzalność partiami w tle (batch validation)
+  // Pre-Render Gate:
+  // Dla filmów ze znanym statusem playable renderujemy od razu createVideoCard.
+  // Dla nieznanych Archivebate renderujemy neutralny skeleton-card (ZERO-FLASH miniatury!).
+  const renderItemCard = (v, idx) => {
+    const vid = String(v.id);
+    const isCw = v.source === 'camwhores' || vid.startsWith('cw_');
+    if (isUserPersonalSection || isCw || window._knownPlayableVideos.has(vid)) {
+      return createVideoCard(v, idx);
+    }
+    return renderSkeletonCard(v, idx);
+  };
+
   const validatePlayabilityBatch = (items) => {
     if (!items || !items.length) return;
-    const ids = items.map(v => v.id).filter(id => id && !String(id).startsWith('cw_') && (!window._knownDeletedVideos || !window._knownDeletedVideos.has(String(id))));
+    const ids = items
+      .map(v => String(v.id))
+      .filter(id => id && !id.startsWith('cw_') && !window._knownDeletedVideos.has(id) && !window._knownPlayableVideos.has(id));
     if (!ids.length) return;
+
     fetch('/api/video/playability/batch', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ids: ids.slice(0, 50) })
     }).then(r => r.json()).then(data => {
       if (data && data.results) {
-        if (!window._knownDeletedVideos) window._knownDeletedVideos = new Set();
+        let deletedCount = 0;
         Object.entries(data.results).forEach(([id, status]) => {
+          const skeletonEl = dom.videoGrid.querySelector(`.skeleton-card[data-video-id="${id}"]`);
           if (status === 'deleted' || status === 'unavailable') {
             window._knownDeletedVideos.add(String(id));
-            const cardEl = dom.videoGrid.querySelector(`[data-video-id="${id}"]`);
-            if (cardEl) {
-              cardEl.remove();
+            if (skeletonEl) {
+              skeletonEl.remove();
+              deletedCount++;
+            }
+            const realCard = dom.videoGrid.querySelector(`.video-card[data-video-id="${id}"]`);
+            if (realCard) realCard.remove();
+          } else {
+            // Playable lub transient error (timeout) -> dopuszczamy bezpiecznie do wyświetlenia
+            window._knownPlayableVideos.add(String(id));
+            if (skeletonEl) {
+              const vData = skeletonEl._videoData || items.find(it => String(it.id) === String(id));
+              if (vData) {
+                const cardIdx = Array.from(dom.videoGrid.children).indexOf(skeletonEl);
+                const realCard = createVideoCard(vData, cardIdx >= 0 ? cardIdx : 0);
+                dom.videoGrid.replaceChild(realCard, skeletonEl);
+              }
             }
           }
         });
+
+        // Dynamic Backfill: jeśli usunięto jakiekolwiek karty z siatki, uzupełniamy brakujące
+        if (deletedCount > 0 && state.mode === 'home') {
+          requestBackfill(deletedCount);
+        }
       }
     }).catch(() => {});
   };
+
+  window._validatePlayabilityBatchGlobal = validatePlayabilityBatch;
+
+  const INITIAL_BATCH = 32;
+  const CHUNK_SIZE = 32;
+  const initial = videos.slice(0, INITIAL_BATCH);
+  const firstFragment = document.createDocumentFragment();
+
+  initial.forEach((v, idx) => firstFragment.appendChild(renderItemCard(v, idx)));
+  dom.videoGrid.appendChild(firstFragment);
+  updateCheckpointUI();
 
   validatePlayabilityBatch(initial);
   checkAndHighlightCheckpoint();
@@ -2304,7 +2409,7 @@ function renderVideoGrid(videos) {
     const fragment = document.createDocumentFragment();
     const currentItems = videos.slice(cursor, end);
     for (let i = cursor; i < end; i += 1) {
-      fragment.appendChild(createVideoCard(videos[i], i));
+      fragment.appendChild(renderItemCard(videos[i], i));
     }
     dom.videoGrid.appendChild(fragment);
     cursor = end;
@@ -2330,6 +2435,7 @@ function renderVideoGrid(videos) {
     }
   }
 }
+
 
 // STOPNIOWE DOKŁADANIE KAFELKÓW W CZASIE RZECZYWISTYM ("PO KOLEI")
 function appendVideoBatch(videos) {

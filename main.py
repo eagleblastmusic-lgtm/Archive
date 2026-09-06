@@ -30,6 +30,7 @@ from cache_store import (
 )
 from storyboard_service import start as start_storyboard, get_status as get_storyboard_status, sprite_path as get_storyboard_sprite_path
 from playability import playability_store, PlayabilityStatus, validate_archivebate_playability
+from startup_cache import startup_range_cache, TAIL_CACHE_BYTES
 
 # Dane logowania nie są już zapisane w kodzie źródłowym.
 _archivebate_email, _archivebate_password = get_archivebate_credentials()
@@ -682,6 +683,51 @@ def get_videos(
         "videos": final_videos
     }
 
+
+@app.post("/api/videos/backfill")
+def backfill_videos(payload: dict = Body(...)):
+    """Pobiera uzupełniających kandydatów wideo w przypadku usunięcia martwych kart z siatki.
+    Zapewnia brak duplikatów (exclude_ids), uwzględnia filtry i blokady, jest ograniczony (bounded: max 3 strony, max 50 wideo).
+    """
+    page = int(payload.get("page", 1))
+    source = str(payload.get("source", "all"))
+    author_filter = str(payload.get("author_filter", "all"))
+    exclude_ids = set(str(x) for x in payload.get("exclude_ids", []))
+    needed = min(50, max(1, int(payload.get("needed", 1))))
+
+    replacements = []
+    seen_ids = set(exclude_ids)
+
+    # Sprawdzamy max 3 kolejne podstrony
+    for offset in range(0, 4):
+        p = page + offset
+        if p > 250:
+            break
+        raw = scraper.get_home_videos(
+            page=p,
+            source=source,
+            author_filter=author_filter,
+            target_count=HOME_PAGE_SIZE
+        ) or []
+        enriched = _enrich_videos(raw, author_filter=author_filter)
+        for v in enriched:
+            if not isinstance(v, dict):
+                continue
+            vid = str(v.get("id", ""))
+            if vid and vid not in seen_ids:
+                seen_ids.add(vid)
+                replacements.append(v)
+                if len(replacements) >= needed:
+                    break
+        if len(replacements) >= needed:
+            break
+
+    return {
+        "requested": needed,
+        "count": len(replacements),
+        "videos": replacements
+    }
+
 @app.get("/api/model/{username}")
 def get_model_videos(username: str, page: int = Query(1, ge=1)):
     """Pobiera filmy konkretnej modelki dla określonej strony wraz z rzeczywistą liczbą stron i łączną liczbą filmów."""
@@ -934,6 +980,7 @@ def stream_video_proxy(url: str = Query(None), id: str = Query(None), embed: str
 
     clean_id = id.split("/")[-1].split("?")[0] if id else None
     embed_url = embed
+    url_gen = 0
 
     if not url and clean_id:
         t_d0 = time.perf_counter()
@@ -942,6 +989,7 @@ def stream_video_proxy(url: str = Query(None), id: str = Query(None), embed: str
         if isinstance(details, dict):
             url = details.get("direct_url")
             embed_url = embed_url or details.get("embed_url")
+            url_gen = details.get("url_generation", 0)
 
     if not embed_url and clean_id and hasattr(scraper, "_details_cache") and clean_id in scraper._details_cache:
         embed_url = scraper._details_cache[clean_id]["data"].get("embed_url")
@@ -963,6 +1011,36 @@ def stream_video_proxy(url: str = Query(None), id: str = Query(None), embed: str
     range_header = request.headers.get("range") if request else None
     if range_header:
         headers["Range"] = range_header
+        if clean_id and startup_range_cache.is_enabled():
+            try:
+                # Sprawdzenie czy zapytanie Range to ogon pliku zaspokajany bezpośrednio z RAM
+                m_range = re.match(r"^bytes=(\d+)-(\d+)?$", range_header.strip())
+                if m_range:
+                    req_start = int(m_range.group(1))
+                    req_end = int(m_range.group(2)) if m_range.group(2) else None
+                    cached_hit = startup_range_cache.get_range(clean_id, url_gen, req_start, req_end)
+                    if cached_hit:
+                        hit_headers = {
+                            "Content-Type": cached_hit.get("content_type", "video/mp4"),
+                            "Accept-Ranges": "bytes",
+                            "Content-Range": cached_hit["content_range"],
+                            "Content-Length": str(cached_hit["content_length"]),
+                            "Cache-Control": "private, no-store",
+                            "X-Startup-Cache": cached_hit.get("cache_tag", "HIT-TAIL")
+                        }
+                        if cached_hit.get("etag"):
+                            hit_headers["ETag"] = cached_hit["etag"]
+                        if cached_hit.get("last_modified"):
+                            hit_headers["Last-Modified"] = cached_hit["last_modified"]
+                        if (request and request.headers.get("x-debug-perf") == "1") or os.environ.get("ARCHIVEBATE_DEBUG_PERF") == "1":
+                            print(f"[STREAM PERF] id={clean_id} STARTUP_CACHE_HIT range={range_header}")
+                        return Response(
+                            content=cached_hit["data"],
+                            status_code=206,
+                            headers=hit_headers
+                        )
+            except Exception:
+                pass
 
     # Używamy dedykowanej sesji streamingu z własną dużą pulą gniazd (izolacja od scrapera)
     active_session = stream_session
@@ -979,6 +1057,7 @@ def stream_video_proxy(url: str = Query(None), id: str = Query(None), embed: str
 
         # Jeśli URL wygasł (403), natychmiast odśwież przez single-flight (zapobieganie thundering herd)
         if req.status_code == 403 and clean_id:
+            startup_range_cache.invalidate(clean_id)
             old_failing_url = url
             req.close()
             t_rec0 = time.perf_counter()
@@ -1178,9 +1257,38 @@ def warm_video_stream(id: str = Query(..., min_length=1)):
                         pass
 
                 r = _validated_session_get(active_session, direct_url, headers=headers, stream=True, timeout=5)
-                # Czytamy mały bufor 16 KB i natychmiast zwalniamy połączenie do connection poola:
+                # Czytamy mały bufor 16 KB i odczytujemy Content-Range dla ogólnego rozmiaru pliku:
+                cr_head = r.headers.get("Content-Range", "")
                 _ = r.raw.read(16384)
                 r.close()
+
+                if startup_range_cache.is_enabled() and r.status_code == 206 and "/" in cr_head:
+                    try:
+                        total_size = int(cr_head.split("/")[-1])
+                        if total_size > TAIL_CACHE_BYTES:
+                            tail_start = max(0, total_size - TAIL_CACHE_BYTES)
+                            tail_headers = {
+                                "User-Agent": headers["User-Agent"],
+                                "Referer": referer,
+                                "Range": f"bytes={tail_start}-"
+                            }
+                            r_tail = _validated_session_get(active_session, direct_url, headers=tail_headers, stream=False, timeout=6)
+                            if r_tail.status_code in (200, 206) and r_tail.content:
+                                tail_end = total_size - 1
+                                url_gen = details.get("url_generation", 1)
+                                startup_range_cache.put_tail(
+                                    video_id=clean_id,
+                                    url_generation=url_gen,
+                                    content_length=total_size,
+                                    tail_start=tail_start,
+                                    tail_end=tail_end,
+                                    tail_bytes=r_tail.content,
+                                    etag=r_tail.headers.get("ETag"),
+                                    last_modified=r_tail.headers.get("Last-Modified"),
+                                    content_type=r_tail.headers.get("Content-Type", "video/mp4")
+                                )
+                    except Exception:
+                        pass
             finally:
                 _warm_limiter.release()
         except Exception:

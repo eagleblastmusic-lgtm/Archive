@@ -2244,6 +2244,69 @@ class TestPlayability(unittest.TestCase):
             # Wykonano dokładnie 1 zapytanie (watch), a nie odpytywano MixDrop embed!
             self.assertEqual(mock_get.call_count, 1)
 
+    def test_18_backfill_endpoint_returns_unseen_candidates(self):
+        """Playability Test 18: Endpoint /api/videos/backfill zwraca kandydatów bez wykluczonych ID."""
+        from fastapi.testclient import TestClient
+        from main import app, scraper
+        from unittest.mock import patch
+
+        candidates = [
+            {"id": "exc_1", "username": "model1", "title": "Vid 1"},
+            {"id": "fresh_1", "username": "model2", "title": "Fresh 1"},
+            {"id": "fresh_2", "username": "model3", "title": "Fresh 2"}
+        ]
+        with patch.object(scraper, "get_home_videos", return_value=candidates):
+            client = TestClient(app)
+            res = client.post("/api/videos/backfill", json={
+                "page": 1,
+                "source": "all",
+                "author_filter": "all",
+                "exclude_ids": ["exc_1"],
+                "needed": 2
+            })
+            self.assertEqual(res.status_code, 200)
+            data = res.json()
+            returned_ids = [v["id"] for v in data.get("videos", [])]
+            self.assertNotIn("exc_1", returned_ids)
+            self.assertIn("fresh_1", returned_ids)
+            self.assertEqual(len(returned_ids), 2)
+
+    def test_19_startup_range_cache_hit_tail_and_invalidation(self):
+        """Startup Cache Test 19: StartupRangeCache serwuje 206 z RAM dla ogona pliku i unieważnia na zmianę generacji."""
+        from startup_cache import StartupRangeCache
+        cache = StartupRangeCache(max_bytes=1024*1024, max_entries=10, ttl=60.0)
+        
+        # Zapisz ogon 64KB (cały plik 100 000 bajtów, ogon od 34 464 do 99 999)
+        total_len = 100000
+        tail_start = 34464
+        tail_end = 99999
+        tail_bytes = b"T" * (tail_end - tail_start + 1)
+        
+        ok = cache.put_tail(
+            video_id="vid_cache_test",
+            url_generation=1,
+            content_length=total_len,
+            tail_start=tail_start,
+            tail_end=tail_end,
+            tail_bytes=tail_bytes,
+            etag='"etag123"'
+        )
+        self.assertTrue(ok)
+        
+        # Żądanie drugiego range'a (np. ostatnie 14.5 KB: 85500 do 99999)
+        hit = cache.get_range("vid_cache_test", url_generation=1, req_start=85500, req_end=None)
+        self.assertIsNotNone(hit)
+        self.assertEqual(hit["status_code"], 206)
+        self.assertEqual(hit["content_range"], f"bytes 85500-99999/{total_len}")
+        self.assertEqual(len(hit["data"]), 99999 - 85500 + 1)
+        self.assertEqual(hit["cache_tag"], "HIT-TAIL")
+        
+        # Żądanie z niepasującą generacją URL (np. po 403) -> automatyczna invalidacja
+        miss = cache.get_range("vid_cache_test", url_generation=2, req_start=85500)
+        self.assertIsNone(miss)
+        # Po invalidacji wpis został usunięty
+        self.assertEqual(cache.stats()["entries_count"], 0)
+
 
 if __name__ == "__main__":
     unittest.main()
