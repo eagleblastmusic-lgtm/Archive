@@ -28,6 +28,16 @@ document.addEventListener('DOMContentLoaded', () => {
   }
   initProfileScanner();
   updateHomeStats();
+  window.ArchivebateCheckpoints.init({
+    showToast,
+    setActiveNavTab,
+    performSearch,
+    loadModelVideos,
+    loadFavorites,
+    loadHistory,
+    loadFollowing,
+    loadHomeVideos
+  });
   updateCheckpointUI();
   
   const urlParams = new URLSearchParams(window.location.search);
@@ -106,108 +116,23 @@ function setActiveNavTab(tabBtn) {
 // SYSTEM PUNKTÓW KONTROLNYCH (CHECKPOINTS)
 // ============================================================
 function getSavedCheckpoint() {
-  try {
-    const raw = localStorage.getItem('archivebate_checkpoint');
-    return raw ? JSON.parse(raw) : null;
-  } catch (e) {
-    return null;
-  }
+  return window.ArchivebateCheckpoints.getSavedCheckpoint();
 }
 
 function setCheckpoint(v) {
-  const checkpoint = {
-    videoId: String(v.id),
-    videoTitle: v.username || 'Film',
-    videoDate: v.date || '',
-    page: state.currentPage || 1,
-    mode: state.mode || 'home',
-    query: state.currentQuery || '',
-    timestamp: Date.now()
-  };
-  localStorage.setItem('archivebate_checkpoint', JSON.stringify(checkpoint));
-  updateCheckpointUI();
-  showToast(`📍 Zapisano checkpoint: ${v.username} (Strona ${checkpoint.page})`, 'success');
+  return window.ArchivebateCheckpoints.setCheckpoint(v);
 }
 
 function updateCheckpointUI() {
-  const cp = getSavedCheckpoint();
-  if (cp) {
-    if (dom.headerCheckpointBtn) {
-      dom.headerCheckpointBtn.style.display = 'inline-flex';
-      if (dom.checkpointText) {
-        dom.checkpointText.innerText = `(Strona ${cp.page} • ${cp.videoTitle})`;
-      }
-    }
-    if (dom.navCheckpointBtn) {
-      dom.navCheckpointBtn.style.display = 'inline-flex';
-      dom.navCheckpointBtn.title = `Przejdź do: ${cp.videoTitle} (Strona ${cp.page})`;
-    }
-  } else {
-    if (dom.headerCheckpointBtn) dom.headerCheckpointBtn.style.display = 'none';
-    if (dom.navCheckpointBtn) dom.navCheckpointBtn.style.display = 'none';
-  }
-
-  // Aktualizacja oznaczeń na kafelkach
-  document.querySelectorAll('.card-date-badge').forEach(badge => {
-    const bVidId = badge.dataset.videoId;
-    if (cp && bVidId === cp.videoId) {
-      badge.classList.add('is-checkpoint');
-      badge.innerHTML = `<i class="fa-solid fa-location-dot"></i> Checkpoint`;
-      badge.title = `Ten film to Twój aktywny punkt kontrolny (Strona ${cp.page})`;
-    } else {
-      badge.classList.remove('is-checkpoint');
-      if (badge.dataset.origDate) {
-        badge.innerHTML = `<i class="fa-regular fa-calendar-days"></i> ${badge.dataset.origDate}`;
-        badge.title = 'Kliknij na datę, aby ustawić punkt kontrolny (checkpoint)';
-      }
-    }
-  });
+  return window.ArchivebateCheckpoints.updateUI();
 }
 
 function navigateToCheckpoint() {
-  const cp = getSavedCheckpoint();
-  if (!cp) {
-    showToast('Brak zapisanego punktu kontrolnego', 'info');
-    return;
-  }
-
-  state.targetCheckpointId = cp.videoId;
-
-  // Przejdź do widoku tabeli filmów na odpowiedniej stronie
-  if (cp.mode === 'search' && cp.query) {
-    dom.searchInput.value = cp.query;
-    dom.clearSearchBtn.style.display = 'flex';
-    performSearch(cp.query, cp.page);
-  } else if (cp.mode === 'model' && cp.query) {
-    loadModelVideos(cp.query, cp.page);
-  } else if (cp.mode === 'favorites') {
-    setActiveNavTab(dom.navFavoritesBtn);
-    loadFavorites(cp.page);
-  } else if (cp.mode === 'history') {
-    setActiveNavTab(dom.navHistoryBtn);
-    loadHistory(cp.page);
-  } else if (cp.mode === 'following') {
-    setActiveNavTab(dom.navFollowingBtn);
-    loadFollowing(cp.page);
-  } else {
-    // Strona główna
-    setActiveNavTab(dom.navHomeBtn);
-    loadHomeVideos(cp.page);
-  }
+  return window.ArchivebateCheckpoints.navigate();
 }
 
 function checkAndHighlightCheckpoint() {
-  if (state.targetCheckpointId) {
-    const targetCard = dom.videoGrid.querySelector(`[data-video-id="${state.targetCheckpointId}"]`);
-    if (targetCard) {
-      targetCard.classList.add('checkpoint-highlight');
-      setTimeout(() => {
-        targetCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      }, 150);
-      showToast('📍 Dotarto do zapisanego punktu kontrolnego!', 'success');
-      state.targetCheckpointId = null;
-    }
-  }
+  return window.ArchivebateCheckpoints.checkAndHighlight();
 }
 
 // ============================================================
