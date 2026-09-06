@@ -2666,6 +2666,162 @@ console.log(JSON.stringify({
         self.assertEqual(res["totalCardsAfterDup"], 2)
 
 
+class TestAppContextExtraction(unittest.TestCase):
+    """Weryfikacja wyodrębnienia kontekstu aplikacji (static/app-context.js) - Etap 1 refaktoryzacji."""
+
+    @classmethod
+    def setUpClass(cls):
+        import shutil
+        cls.node_available = shutil.which("node") is not None
+
+    def run_node_eval(self, js_code: str):
+        if not self.node_available:
+            self.skipTest("Node.js nie jest zainstalowany w środowisku.")
+        import json
+        import subprocess
+        full_code = f"""
+const fs = require('fs');
+{js_code}
+"""
+        proc = subprocess.run(["node", "-e", full_code], capture_output=True, text=True, timeout=10)
+        self.assertEqual(proc.returncode, 0, f"Node script failed with stderr: {proc.stderr}\nstdout: {proc.stdout}")
+        return json.loads(proc.stdout.strip())
+
+    def test_app_context_file_structure_and_parity(self):
+        """Sprawdza obecność static/app-context.js, kolejność skryptów w index.html oraz spójność root app.js z static/app.js."""
+        import os
+        self.assertTrue(os.path.exists("static/app-context.js"), "Brak pliku static/app-context.js!")
+
+        with open("static/app.js", "r", encoding="utf-8") as f1, open("app.js", "r", encoding="utf-8") as f2:
+            self.assertEqual(f1.read(), f2.read(), "app.js w root musi być zgodny z static/app.js!")
+
+        with open("static/index.html", "r", encoding="utf-8") as f1, open("index.html", "r", encoding="utf-8") as f2:
+            self.assertEqual(f1.read(), f2.read(), "index.html w root musi być zgodny z static/index.html!")
+
+        with open("static/index.html", "r", encoding="utf-8") as f:
+            html = f.read()
+
+        ctx_idx = html.find('src="/static/app-context.js')
+        app_idx = html.find('src="/static/app.js')
+        self.assertNotEqual(ctx_idx, -1, "Brak tagu script dla app-context.js w index.html!")
+        self.assertNotEqual(app_idx, -1, "Brak tagu script dla app.js w index.html!")
+        self.assertLess(ctx_idx, app_idx, "app-context.js musi być ładowany przed app.js!")
+
+        with open("static/app.js", "r", encoding="utf-8") as f:
+            app_code = f.read()
+        self.assertNotIn("const state = {", app_code, "static/app.js nie powinien zawierać monolitycznej definicji const state!")
+        self.assertNotIn("const dom = {", app_code, "static/app.js nie powinien zawierać monolitycznej definicji const dom!")
+
+    def test_app_context_state_and_dom_registry(self):
+        """Weryfikuje, że app-context.js poprawnie inicjalizuje ArchivebateAppContext, zachowuje wszystkie pola state oraz mapuje elementy dom."""
+        js = """
+global.window = global;
+const queriedIds = [];
+global.document = {
+  getElementById: (id) => {
+    queriedIds.push(id);
+    return { id, addEventListener: () => {}, classList: { add: () => {}, remove: () => {} }, style: {} };
+  },
+  addEventListener: () => {}
+};
+global.localStorage = {
+  getItem: (k) => (k === 'archivebate_show_camwhores' ? 'true' : null),
+  setItem: () => {}
+};
+
+require('./static/app-context.js');
+
+const ctx = window.ArchivebateAppContext;
+if (!ctx) throw new Error('window.ArchivebateAppContext is not defined!');
+
+const state = ctx.state;
+const dom = ctx.dom;
+
+const stateChecks = {
+  hasContext: !!ctx,
+  mode: state.mode,
+  currentPage: state.currentPage,
+  lastPage: state.lastPage,
+  isLoading: state.isLoading,
+  isArrayVideos: Array.isArray(state.videos),
+  currentVideoDetails: state.currentVideoDetails,
+  isIframeMode: state.isIframeMode,
+  showCamwhores: state.showCamwhores,
+  sourceFilter: state.sourceFilter,
+  authorFilter: state.authorFilter,
+  favoritesCount: state.favoritesCount,
+  historyCount: state.historyCount,
+  followingCount: state.followingCount,
+  isSetFavoriteAuthors: state.favoriteAuthors instanceof Set,
+  isMapVideoById: state.videoById instanceof Map,
+  hasVideoGrid: !!dom.videoGrid && dom.videoGrid.id === 'videoGrid',
+  hasSearchInput: !!dom.searchInput && dom.searchInput.id === 'searchInput',
+  hasVideoModal: !!dom.videoModal && dom.videoModal.id === 'videoModal',
+  hasInitDom: typeof ctx.initDom === 'function'
+};
+
+console.log(JSON.stringify(stateChecks));
+"""
+        res = self.run_node_eval(js)
+        self.assertTrue(res["hasContext"])
+        self.assertEqual(res["mode"], "home")
+        self.assertEqual(res["currentPage"], 1)
+        self.assertEqual(res["lastPage"], 50)
+        self.assertFalse(res["isLoading"])
+        self.assertTrue(res["isArrayVideos"])
+        self.assertIsNone(res["currentVideoDetails"])
+        self.assertFalse(res["isIframeMode"])
+        self.assertTrue(res["showCamwhores"])
+        self.assertEqual(res["sourceFilter"], "all")
+        self.assertEqual(res["authorFilter"], "all")
+        self.assertEqual(res["favoritesCount"], 0)
+        self.assertEqual(res["historyCount"], 0)
+        self.assertEqual(res["followingCount"], 0)
+        self.assertTrue(res["isSetFavoriteAuthors"])
+        self.assertTrue(res["isMapVideoById"])
+        self.assertTrue(res["hasVideoGrid"])
+        self.assertTrue(res["hasSearchInput"])
+        self.assertTrue(res["hasVideoModal"])
+        self.assertTrue(res["hasInitDom"])
+
+    def test_app_bootstrap_with_context_no_reference_error(self):
+        """Weryfikuje, że app.js bootstrapuje bez ReferenceError i konsumuje state i dom z window.ArchivebateAppContext."""
+        js = """
+global.window = global;
+global.document = {
+  getElementById: (id) => ({ id, addEventListener: () => {}, classList: { add: () => {}, remove: () => {} }, style: {} }),
+  addEventListener: () => {},
+  body: { classList: { add: () => {}, remove: () => {} } }
+};
+global.localStorage = { getItem: () => null, setItem: () => {} };
+global.location = { search: '' };
+global.URLSearchParams = class { get() { return null; } };
+
+require('./static/performance.js');
+require('./static/app-context.js');
+
+const appJsCode = fs.readFileSync('static/app.js', 'utf8');
+const testWrapper = `
+(function() {
+  ${appJsCode}
+  return {
+    stateRef: typeof state !== 'undefined',
+    domRef: typeof dom !== 'undefined',
+    isFavAuthorFn: typeof isFavoriteAuthor === 'function',
+    stateMode: state.mode
+  };
+})()
+`;
+const result = eval(testWrapper);
+console.log(JSON.stringify(result));
+"""
+        res = self.run_node_eval(js)
+        self.assertTrue(res["stateRef"])
+        self.assertTrue(res["domRef"])
+        self.assertTrue(res["isFavAuthorFn"])
+        self.assertEqual(res["stateMode"], "home")
+
+
 if __name__ == "__main__":
     unittest.main()
 

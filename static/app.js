@@ -2,155 +2,16 @@
  * Archivebate Video Browser - Frontend Logic
  */
 
-// Stan aplikacji
-const state = {
-  mode: 'home', // 'home' | 'search' | 'model' | 'favorites' | 'history' | 'following' | 'account'
-  currentQuery: '',
-  currentModel: '',
-  currentPage: 1,
-  lastPage: 50,
-  isLoading: false,
-  videos: [],
-  currentVideoDetails: null,
-  isIframeMode: false,
-  targetCheckpointId: null,
-  showCamwhores: localStorage.getItem('archivebate_show_camwhores') !== 'false',
-  sourceFilter: localStorage.getItem('archivebate_source_filter') || 'all',
-  authorFilter: localStorage.getItem('archivebate_author_filter') || 'all', // 'all' | 'only_fav' | 'exclude_fav'
-  favoritesCount: 0,
-  historyCount: 0,
-  followingCount: 0,
-  favoriteAuthors: new Set(),
-  preloadedStoryboard: [],
-  localStoryboard: null,
-  currentStoryboardKey: null,
-  storyboardBuildController: null,
-  timelineSpriteBoard: null,
-  timelineSpriteAbort: null,
-  videoById: new Map()
-};
+// Kontekst aplikacji (stan oraz elementy DOM)
+const { state, dom } = (typeof window !== 'undefined' && window.ArchivebateAppContext)
+  ? window.ArchivebateAppContext
+  : (typeof ArchivebateAppContext !== 'undefined' ? ArchivebateAppContext : { state: {}, dom: {} });
 
 function isFavoriteAuthor(username) {
   if (!username) return false;
   const norm = String(username).toLowerCase().trim();
   return state.favoriteAuthors && state.favoriteAuthors.has(norm);
 }
-
-// Elementy DOM
-const dom = {
-  videoGrid: document.getElementById('videoGrid'),
-  searchInput: document.getElementById('searchInput'),
-  clearSearchBtn: document.getElementById('clearSearchBtn'),
-  searchAutocompleteDropdown: document.getElementById('searchAutocompleteDropdown'),
-  tagsSection: document.getElementById('tagsSection'),
-  tagsContainer: document.getElementById('tagsContainer'),
-  contentHeader: document.getElementById('contentHeader'),
-  viewTitle: document.getElementById('viewTitle'),
-  videoCount: document.getElementById('videoCount'),
-  resetFilterBtn: document.getElementById('resetFilterBtn'),
-  toggleCamwhoresBtn: document.getElementById('toggleCamwhoresBtn'),
-  sourceToggleIcon: document.getElementById('sourceToggleIcon'),
-  camwhoresToggleLabel: document.getElementById('camwhoresToggleLabel'),
-  toggleAuthorFilterBtn: document.getElementById('toggleAuthorFilterBtn'),
-  authorFilterIcon: document.getElementById('authorFilterIcon'),
-  authorFilterLabel: document.getElementById('authorFilterLabel'),
-  headerCheckpointBtn: document.getElementById('headerCheckpointBtn'),
-  checkpointText: document.getElementById('checkpointText'),
-  navCheckpointBtn: document.getElementById('navCheckpointBtn'),
-  matchedProfiles: document.getElementById('matchedProfiles'),
-  profilesList: document.getElementById('profilesList'),
-  // Home Stats Bar
-  homeStatsBar: document.getElementById('homeStatsBar'),
-  statGlobalVideos: document.getElementById('statGlobalVideos'),
-  statCatalogVideos: document.getElementById('statCatalogVideos'),
-  statGlobalProfiles: document.getElementById('statGlobalProfiles'),
-  statPageVideos: document.getElementById('statPageVideos'),
-  statUserLibrary: document.getElementById('statUserLibrary'),
-  statBlockedInfo: document.getElementById('statBlockedInfo'),
-  statBlockedVideosLbl: document.getElementById('statBlockedVideosLbl'),
-  // Account Panel View
-  accountPanelView: document.getElementById('accountPanelView'),
-  panelEmail: document.getElementById('panelEmail'),
-  panelLastSync: document.getElementById('panelLastSync'),
-  panelSyncBtn: document.getElementById('panelSyncBtn'),
-  panelClearHistoryBtn: document.getElementById('panelClearHistoryBtn'),
-  statFavCount: document.getElementById('statFavCount'),
-  statHistCount: document.getElementById('statHistCount'),
-  statFollCount: document.getElementById('statFollCount'),
-  statBlockedCount: document.getElementById('statBlockedCount'),
-  statBtnFavs: document.getElementById('statBtnFavs'),
-  statBtnHist: document.getElementById('statBtnHist'),
-  statBtnFoll: document.getElementById('statBtnFoll'),
-  statBtnBlocked: document.getElementById('statBtnBlocked'),
-  // Nav Tabs
-  navHomeBtn: document.getElementById('navHomeBtn'),
-  navFavoritesBtn: document.getElementById('navFavoritesBtn'),
-  navHistoryBtn: document.getElementById('navHistoryBtn'),
-  navFollowingBtn: document.getElementById('navFollowingBtn'),
-  navAccountBtn: document.getElementById('navAccountBtn'),
-  navFavCount: document.getElementById('navFavCount'),
-  navHistCount: document.getElementById('navHistCount'),
-  // Pagination
-  paginationSection: document.getElementById('paginationSection'),
-  prevPageBtn: document.getElementById('prevPageBtn'),
-  nextPageBtn: document.getElementById('nextPageBtn'),
-  lastPageBtn: document.getElementById('lastPageBtn'),
-  lastPageNumber: document.getElementById('lastPageNumber'),
-  pageNumbersList: document.getElementById('pageNumbersList'),
-  pageJumpInput: document.getElementById('pageJumpInput'),
-  pageJumpBtn: document.getElementById('pageJumpBtn'),
-  // User
-  userEmail: document.getElementById('userEmail'),
-  statusDot: document.getElementById('statusDot'),
-  reloginBtn: document.getElementById('reloginBtn'),
-  logoBtn: document.getElementById('logoBtn'),
-  // Modal
-  videoModal: document.getElementById('videoModal'),
-  modalCloseBtn: document.getElementById('modalCloseBtn'),
-  modalVideo: document.getElementById('modalVideo'),
-  modalIframe: document.getElementById('modalIframe'),
-  modalLoadingPoster: document.getElementById('modalLoadingPoster'),
-  videoLoader: document.getElementById('videoLoader'),
-  modalPlatform: document.getElementById('modalPlatform'),
-  modalModelName: document.getElementById('modalModelName'),
-  modalFavBtn: document.getElementById('modalFavBtn'),
-  modalViewModelVideosBtn: document.getElementById('modalViewModelVideosBtn'),
-  modalBlockModelBtn: document.getElementById('modalBlockModelBtn'),
-  modalDownloadBtn: document.getElementById('modalDownloadBtn'),
-  modalPopoutBtn: document.getElementById('modalPopoutBtn'),
-  modalTogglePlayerBtn: document.getElementById('modalTogglePlayerBtn'),
-  modalOriginalBtn: document.getElementById('modalOriginalBtn'),
-  modalKeywords: document.getElementById('modalKeywords'),
-  toastContainer: document.getElementById('toastContainer'),
-  // Modal Custom Player Controls
-  modalPlayerWrapper: document.getElementById('modalPlayerWrapper'),
-  modalCenterPlay: document.getElementById('modalCenterPlay'),
-  modalControlsBar: document.getElementById('modalControlsBar'),
-  modalTimelineContainer: document.getElementById('modalTimelineContainer'),
-  modalTimelineTooltip: document.getElementById('modalTimelineTooltip'),
-  modalTimelinePreviewBox: document.getElementById('modalTimelinePreviewBox'),
-  modalTimelinePreviewImg: document.getElementById('modalTimelinePreviewImg'),
-  modalTimelineSprite: document.getElementById('modalTimelineSprite'),
-  modalTimelinePreviewStatus: document.getElementById('modalTimelinePreviewStatus'),
-  modalTimelinePreviewVideo: document.getElementById('modalTimelinePreviewVideo'),
-  modalTimelineTimeText: document.getElementById('modalTimelineTimeText'),
-  modalTimelineProgress: document.getElementById('modalTimelineProgress'),
-  modalTimelineBuffer: document.getElementById('modalTimelineBuffer'),
-  modalTimelineThumb: document.getElementById('modalTimelineThumb'),
-  modalCtrlPlayBtn: document.getElementById('modalCtrlPlayBtn'),
-  modalCtrlRewindBtn: document.getElementById('modalCtrlRewindBtn'),
-  modalCtrlForwardBtn: document.getElementById('modalCtrlForwardBtn'),
-  modalCtrlPrevVideoBtn: document.getElementById('modalCtrlPrevVideoBtn'),
-  modalCtrlNextVideoBtn: document.getElementById('modalCtrlNextVideoBtn'),
-  modalNavPrevArrow: document.getElementById('modalNavPrevArrow'),
-  modalNavNextArrow: document.getElementById('modalNavNextArrow'),
-  modalCtrlVolumeBtn: document.getElementById('modalCtrlVolumeBtn'),
-  modalCtrlVolumeSlider: document.getElementById('modalCtrlVolumeSlider'),
-  modalCtrlTimeDisplay: document.getElementById('modalCtrlTimeDisplay'),
-  modalCtrlSpeedBtn: document.getElementById('modalCtrlSpeedBtn'),
-  modalCtrlPipBtn: document.getElementById('modalCtrlPipBtn'),
-  modalCtrlFullscreenBtn: document.getElementById('modalCtrlFullscreenBtn')
-};
 
 // Inicjalizacja
 document.addEventListener('DOMContentLoaded', () => {
