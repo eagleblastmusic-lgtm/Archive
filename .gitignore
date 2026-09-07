@@ -1,0 +1,14 @@
+.env.local
+data/credentials.local.json
+__pycache__/
+*.pyc
+data/thumbs_cache/
+data/feed_cache/
+data/details_cache/
+
+# Local account data and temporary storage
+data/user_store.json
+data/user_store.json.*.tmp
+
+# Generated storyboard cache and media
+data/storyboard_cache/
