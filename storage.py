@@ -81,7 +81,7 @@ class UserStorage:
     def add_favorite(self, video: Dict[str, Any]) -> bool:
         v_id = str(video.get("id"))
         if not self.is_favorite(v_id):
-            item = dict(video)
+            item = {k: v for k, v in video.items() if k not in {"grouped_videos", "playlist", "is_grouped", "group_count"}}
             item["id"] = v_id
             item["added_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             self.data.setdefault("favorites", []).insert(0, item)
@@ -131,7 +131,7 @@ class UserStorage:
         # Usuń istniejący wpis jeśli istnieje, aby przenieść go na sam początek
         history[:] = [h for h in history if str(h.get("id")) != v_id]
 
-        item = dict(video)
+        item = {k: v for k, v in video.items() if k not in {"grouped_videos", "playlist", "is_grouped", "group_count"}}
         item["id"] = v_id
         item["watched_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         history.insert(0, item)

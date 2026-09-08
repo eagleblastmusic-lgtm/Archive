@@ -1,4 +1,5 @@
 import unittest
+import os
 from fastapi.testclient import TestClient
 from main import app
 from scraper import parse_date_to_sort_seconds, sort_videos_newest_first
@@ -26,6 +27,7 @@ class TestArchivebateApp(unittest.TestCase):
         actual_ids = [v["id"] for v in sorted_vids]
         self.assertEqual(actual_ids, expected_ids)
 
+    @unittest.skipUnless(os.getenv("ARCHIVEBATE_NETWORK_TESTS") == "1", "External source test; opt in explicitly")
     def test_search_endpoint(self):
         r = self.client.get("/api/search?q=trans&page=1")
         self.assertEqual(r.status_code, 200)

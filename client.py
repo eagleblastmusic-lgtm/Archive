@@ -17,8 +17,8 @@ class ArchivebateSession:
         self.password = password
         self.session = requests.Session()
         
-        # Zwiększona pula połączeń i ponawianie żądań dla wielowątkowości
-        retries = Retry(total=3, backoff_factor=0.3, status_forcelist=[500, 502, 503, 504])
+        # Kontrolowana pula połączeń i ograniczony budżet retry, aby nie blokować pętli zdarzeń
+        retries = Retry(total=1, connect=1, read=0, backoff_factor=0.2, status_forcelist=[502, 503, 504])
         adapter = HTTPAdapter(pool_connections=50, pool_maxsize=50, max_retries=retries)
         self.session.mount("https://", adapter)
         self.session.mount("http://", adapter)
@@ -165,11 +165,11 @@ class ArchivebateSession:
             ]
         }
         try:
-            r = self.session.post(url, json=payload, headers=headers, timeout=12)
+            r = self.session.post(url, json=payload, headers=headers, timeout=(3.0, 8.0))
             if r.status_code == 200:
                 data = r.json()
                 effects = data.get("effects", {})
                 return effects.get("html", "")
         except Exception as e:
-            logger.error(f"Błąd wywołania Livewire ({component_name}->{method}): {e}")
+            logger.warning(f"Błąd wywołania Livewire ({component_name}->{method}): {type(e).__name__}")
         return None

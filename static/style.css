@@ -2354,6 +2354,7 @@ a.model-profile-link.is-favorite-author:hover {
   grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
   gap: 12px;
   margin-bottom: 20px;
+  min-height: 70px;
 }
 
 .home-stat-card {
@@ -2483,4 +2484,14 @@ a.model-profile-link.is-favorite-author:hover {
 }
 .timeline-preview-status {
   display: none !important;
+}
+
+.feed-refresh-indicator {
+  display: inline-flex;
+  align-items: center;
+  vertical-align: middle;
+  font-size: 13px;
+  color: var(--primary, #ffa31a);
+  margin-left: 10px;
+  opacity: 0.9;
 }

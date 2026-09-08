@@ -13,9 +13,10 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 FEED_CACHE_DIR = DATA_DIR / "feed_cache"
 DETAILS_CACHE_DIR = DATA_DIR / "details_cache"
+STREAM_CACHE_DIR = DATA_DIR / "stream_cache"
 THUMBS_CACHE_DIR = DATA_DIR / "thumbs_cache"
 STORYBOARD_CACHE_DIR = DATA_DIR / "storyboard_cache"
-for _d in (DATA_DIR, FEED_CACHE_DIR, DETAILS_CACHE_DIR, THUMBS_CACHE_DIR, STORYBOARD_CACHE_DIR):
+for _d in (DATA_DIR, FEED_CACHE_DIR, DETAILS_CACHE_DIR, STREAM_CACHE_DIR, THUMBS_CACHE_DIR, STORYBOARD_CACHE_DIR):
     _d.mkdir(parents=True, exist_ok=True)
 
 _json_lock = threading.RLock()

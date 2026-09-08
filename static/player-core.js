@@ -28,29 +28,32 @@
    * została już wysłana do kompozytora. To było źródłem "jednego kadru".
    * requestVideoFrameCallback daje nam faktycznie zaprezentowaną klatkę.
    */
-  function waitForPresentedFrame(video, expectedTime, timeoutMs = 1200) {
-    if (!video) return Promise.resolve();
+  function waitForPresentedFrame(video, expectedTime, timeoutMs = 1200, signal) {
+    if (!video || signal?.aborted) return Promise.resolve(false);
 
     if (typeof video.requestVideoFrameCallback === 'function') {
       return new Promise(resolve => {
         let finished = false;
         let callbackId = null;
         let timer = null;
-        const finish = () => {
+        const finish = (presented = false) => {
           if (finished) return;
           finished = true;
           clearTimeout(timer);
+          signal?.removeEventListener('abort', onAbort);
           if (callbackId !== null && typeof video.cancelVideoFrameCallback === 'function') {
             try { video.cancelVideoFrameCallback(callbackId); } catch (_) {}
           }
-          resolve();
+          resolve(presented);
         };
+        const onAbort = () => finish(false);
+        signal?.addEventListener('abort', onAbort, { once: true });
 
         // Callback rejestrujemy już po `seeked`, więc pierwszy zaprezentowany frame
         // jest dokładnie tym, na który chcemy czekać. Nie wymagamy idealnego mediaTime:
         // GOP/keyframe może przesunąć go o kilka klatek.
         try {
-          callbackId = video.requestVideoFrameCallback(() => finish());
+          callbackId = video.requestVideoFrameCallback(() => finish(true));
           timer = setTimeout(finish, timeoutMs);
         } catch (_) {
           finish();
@@ -58,7 +61,7 @@
       });
     }
 
-    return nextAnimationFrame();
+    return nextAnimationFrame().then(() => !signal?.aborted && video.readyState >= 2 && !video.seeking);
   }
 
   function createPreviewSeeker(video, options = {}) {
@@ -75,13 +78,16 @@
 
     const dispatchPresentedFrame = async (serial, targetTime) => {
       try {
-        await waitForPresentedFrame(video, targetTime, Math.min(1300, watchdogMs));
+        const presented = await waitForPresentedFrame(video, targetTime, Math.min(1300, watchdogMs));
+        if (!presented) return;
       } catch (_) {}
       if (destroyed || serial !== seekSerial) return;
       clearTimeout(watchdog);
       inFlight = false;
       activeTarget = null;
-      if (typeof options.onFrame === 'function') options.onFrame(video.currentTime, targetTime);
+      if (typeof options.onFrame === 'function') {
+        options.onFrame(video.currentTime, targetTime, { isLatest: requestedTime === null });
+      }
       if (requestedTime !== null) request(requestedTime);
     };
 
@@ -122,6 +128,7 @@
         clearTimeout(watchdog);
         watchdog = setTimeout(() => {
           if (serial !== seekSerial) return;
+          seekSerial += 1;
           inFlight = false;
           activeTarget = null;
           if (requestedTime !== null) request(requestedTime);
@@ -136,6 +143,7 @@
       clearTimeout(watchdog);
       watchdog = setTimeout(() => {
         if (serial !== seekSerial) return;
+        seekSerial += 1;
         inFlight = false;
         activeTarget = null;
         if (requestedTime !== null) request(requestedTime);
@@ -153,7 +161,7 @@
       if (destroyed || !video || !Number.isFinite(targetTime)) return;
       requestedTime = Math.max(0, targetTime);
       if (video.readyState < 1 || !Number.isFinite(video.duration) || video.duration <= 0) return;
-      if (inFlight) return;
+      if (inFlight || video.seeking) return;
       clearTimeout(timer);
       const delay = Math.max(0, minInterval - (performance.now() - lastSeekAt));
       timer = setTimeout(perform, delay);
@@ -183,11 +191,29 @@
     return { request, reset, destroy };
   }
 
+  function findNearestFrameIndex(times, targetTime) {
+    if (!Array.isArray(times) || !times.length) return 0;
+    const target = Number(targetTime) || 0;
+    let low = 0;
+    let high = times.length - 1;
+    while (low <= high) {
+      const mid = (low + high) >> 1;
+      const diff = times[mid] - target;
+      if (Math.abs(diff) < 0.001) return mid;
+      if (diff < 0) low = mid + 1;
+      else high = mid - 1;
+    }
+    if (low >= times.length) return times.length - 1;
+    if (high < 0) return 0;
+    return Math.abs(times[low] - target) < Math.abs(times[high] - target) ? low : high;
+  }
+
   window.ArchivebatePlayerCore = {
     clamp,
     ratioFromPointer,
     tooltipX,
     waitForPresentedFrame,
-    createPreviewSeeker
+    createPreviewSeeker,
+    findNearestFrameIndex
   };
 })();

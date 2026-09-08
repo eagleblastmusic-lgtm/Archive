@@ -151,13 +151,25 @@ def scan_archivebate_directory():
         list(executor.map(model_tag_manager.resolve_model, all_users))
     logger.info("[Scanner] Zakończono skanowanie profili z Archivebate.")
 
+def wait_for_playback_idle():
+    try:
+        import main
+        while main.is_playback_active():
+            time.sleep(0.5)
+    except Exception:
+        pass
+
 def run_full_quick_scan():
-    """Uruchamia pełny, błyskawiczny skan wszystkich dostępnych źródeł."""
+    """Uruchamia pełny, błyskawiczny skan wszystkich dostępnych źródeł (z ustępowaniem odtwarzaczowi)."""
     t0 = time.time()
     logger.info("=== START SZYBKIEGO SKANERA PROFILI ===")
+    wait_for_playback_idle()
     scan_user_store()
+    wait_for_playback_idle()
     scan_camwhores_tags()
+    wait_for_playback_idle()
     scan_camwhores_popular_models(max_pages=15)
+    wait_for_playback_idle()
     scan_archivebate_directory()
     t1 = time.time()
     logger.info(f"=== SKANOWANIE ZAKOŃCZONE w {t1 - t0:.1f} sekund! ===")

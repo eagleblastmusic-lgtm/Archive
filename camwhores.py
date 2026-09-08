@@ -167,7 +167,7 @@ class CamwhoresScraper:
             logger.debug(f"Błąd parsowania kafelka Camwhores: {e}")
             return None
 
-    def get_latest_videos(self, page: int = 1) -> List[Dict[str, Any]]:
+    def get_latest_videos(self, page: int = 1, strict: bool = False) -> List[Dict[str, Any]]:
         """Pobiera najnowsze filmy ze strony głównej Camwhores.tv (z automatycznym fallbackiem na mirror)."""
         cache_key = f"latest:{page}"
         if cache_key in self._cache:
@@ -181,12 +181,14 @@ class CamwhoresScraper:
             f"https://www.camwhores.co/latest-updates/{page}/" if page > 1 else "https://www.camwhores.co/",
         ]
 
+        valid_response = False
         for url in urls_to_try:
             try:
                 r = self.session.get(url, timeout=10)
                 if r.status_code != 200:
                     continue
                 
+                valid_response = True
                 raw_items = re.findall(r'(<div class="item\s*[^"]*">.*?)(?=<div class="item\s*[^"]*"|class="pagination"|$)', r.text, re.DOTALL)
                 videos = []
                 seen_ids = set()
@@ -204,6 +206,7 @@ class CamwhoresScraper:
                 logger.debug(f"Błąd pobierania wideo z {url}: {e}")
                 continue
 
+        if strict and not valid_response: raise RuntimeError("Source did not return a successful response")
         return []
 
     def get_query_last_page(self, query: str) -> int:
@@ -500,88 +503,40 @@ def extract_date_signature(text: str) -> Optional[str]:
         return f"{m2.group(3)}-{m2.group(2)}-{m2.group(1)}"
     return None
 
-def is_duplicate(video_a: Dict[str, Any], video_b: Dict[str, Any]) -> bool:
-    """Zwraca True, jeśli oba obiekty wideo reprezentują to samo nagranie."""
-    # 1. To samo ID
-    if video_a.get("id") and video_b.get("id") and str(video_a["id"]) == str(video_b["id"]):
-        return True
+def video_identity(video):
+    """Source-scoped identity; descriptive metadata never proves equality."""
+    ident = str(video.get("id") or "").strip()
+    source = "camwhores" if ident.startswith("cw_") or video.get("source") == "camwhores" else (video.get("source") or "archivebate")
+    if source == "camwhores" and ident.startswith("cw_"):
+        ident = ident[3:]
+    if ident:
+        return (source, "id", ident)
+    url = str(video.get("url") or "").strip().split("#")[0].rstrip("/")
+    return (source, "url", url) if url else None
 
-    # 2. Ta sama modelka
-    mod_a = normalize_model_name(video_a.get("username", ""))
-    mod_b = normalize_model_name(video_b.get("username", ""))
-    if not mod_a or not mod_b or mod_a != mod_b:
-        return False
 
-    # 3. Jeśli ta sama modelka, sprawdzamy sygnaturę daty
-    full_text_a = f"{video_a.get('date', '')} {video_a.get('url', '')} {video_a.get('title', '')}"
-    full_text_b = f"{video_b.get('date', '')} {video_b.get('url', '')} {video_b.get('title', '')}"
-    
-    date_a = extract_date_signature(full_text_a)
-    date_b = extract_date_signature(full_text_b)
-    if date_a and date_b and date_a == date_b:
-        return True
+def is_duplicate(video_a, video_b):
+    key = video_identity(video_a)
+    return key is not None and key == video_identity(video_b)
 
-    # 4. Jeśli ten sam czas trwania (np. 18:42 vs 18:42) dla tej samej modelki
-    dur_a = str(video_a.get("duration", "")).strip()
-    dur_b = str(video_b.get("duration", "")).strip()
-    if dur_a and dur_b and dur_a != "N/A" and dur_a == dur_b:
-        return True
 
-    return False
-
-def deduplicate_videos(videos: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Całkowicie eliminuje wszelkie duplikaty filmów na podstawie ID, URL, sygnatury (model + czas trwania) oraz daty."""
-    if not videos:
-        return []
-    result = []
-    seen_ids = set()
-    seen_urls = set()
-    seen_user_dur = set()
-    seen_user_date = set()
-
-    for v in videos:
-        if not isinstance(v, dict):
+def deduplicate_videos(videos):
+    """Linear, stable deduplication. Fill missing metadata without mutating input."""
+    result, seen = [], {}
+    for video in videos or []:
+        if not isinstance(video, dict):
             continue
-
-        # 1. Unikalne ID wideo
-        vid_id = str(v.get("id") or "").strip().lower()
-        if vid_id and vid_id in seen_ids:
+        key = video_identity(video)
+        if key is not None and key in seen:
+            existing = seen[key]
+            for field, value in video.items():
+                if not existing.get(field) and value:
+                    existing[field] = value
             continue
-
-        # 2. Unikalny URL wideo
-        v_url = str(v.get("url") or "").strip().lower()
-        if v_url and v_url in seen_urls:
-            continue
-
-        # 3. Model + czas trwania
-        m = normalize_model_name(v.get("username", ""))
-        dur = str(v.get("duration") or "").strip()
-        if m and m not in ("model", "unknown") and dur and dur not in ("N/A", "00:00", "0:00"):
-            dur_sig = (m, dur)
-            if dur_sig in seen_user_dur:
-                continue
-
-        # 4. Model + data nagrania
-        d = extract_date_signature(f"{v.get('date', '')} {v.get('url', '')} {v.get('title', '')}")
-        if m and m not in ("model", "unknown") and d:
-            date_sig = (m, d)
-            if date_sig in seen_user_date:
-                continue
-
-        # Weryfikacja bezpośrednia z dotychczasowymi
-        if any(is_duplicate(v, existing) for existing in result):
-            continue
-
-        result.append(v)
-        if vid_id:
-            seen_ids.add(vid_id)
-        if v_url:
-            seen_urls.add(v_url)
-        if m and m not in ("model", "unknown") and dur and dur not in ("N/A", "00:00", "0:00"):
-            seen_user_dur.add((m, dur))
-        if m and m not in ("model", "unknown") and d:
-            seen_user_date.add((m, d))
-
+        item = dict(video)
+        result.append(item)
+        if key is not None:
+            seen[key] = item
     return result
 
 def merge_and_deduplicate(primary_videos: List[Dict[str, Any]], secondary_videos: List[Dict[str, Any]]) -> List[Dict[str, Any]]:

@@ -190,7 +190,7 @@
           <i class="fa-solid fa-layer-group"></i>
         </div>
         <div class="stat-card-text">
-          <span class="stat-card-val" id="statPageVideos">280</span>
+          <span class="stat-card-val" id="statPageVideos">0</span>
           <span class="stat-card-lbl">Filmów na tej stronie</span>
         </div>
       </div>
@@ -252,6 +252,27 @@
     <div class="matched-profiles" id="matchedProfiles">
       <div class="matched-profiles-title"><i class="fa-solid fa-user-tag"></i> Znalezione profile:</div>
       <div class="profiles-list" id="profilesList"></div>
+    </div>
+
+    <!-- NUMERACJA STRON NAD SIATKĄ (TOP PAGINATION) -->
+    <div class="pagination-section top-pagination" id="paginationSectionTop" style="margin-top: 0; margin-bottom: 14px; padding: 4px 0;">
+      <div class="pagination-container" id="paginationContainerTop">
+        <button class="page-nav-btn" id="prevPageBtnTop" title="Poprzednia strona">
+          <i class="fa-solid fa-chevron-left"></i> Poprzednia
+        </button>
+        <div class="page-numbers-list" id="pageNumbersListTop"></div>
+        <button class="page-nav-btn" id="nextPageBtnTop" title="Następna strona">
+          Następna <i class="fa-solid fa-chevron-right"></i>
+        </button>
+        <button class="page-nav-btn last-page-btn" id="lastPageBtnTop" title="Idź do ostatniej strony">
+          Ostatnia (<span id="lastPageNumberTop">1</span>) <i class="fa-solid fa-angles-right"></i>
+        </button>
+        <div class="page-jump-box">
+          <span>Strona:</span>
+          <input type="number" id="pageJumpInputTop" min="1" max="1000" value="1">
+          <button class="page-jump-btn" id="pageJumpBtnTop">Przejdź</button>
+        </div>
+      </div>
     </div>
 
     <!-- VIDEO GRID -->
@@ -415,7 +436,27 @@
   <script src="/static/performance.js?v=1"></script>
   <script src="/static/storyboard-cache.js?v=2.1"></script>
   <script src="/static/player-core.js?v=2.2"></script>
-  <script src="/static/youtube-storyboard.js?v=2.0"></script>
-  <script src="/static/app.js?v=34.0"></script>
+  <script src="/static/youtube-storyboard.js?v=3.0"></script>
+  <script src="/static/app-context.js?v=1.0"></script>
+  <script src="/static/toast.js?v=1.0"></script>
+  <script src="/static/filters.js?v=1.0"></script>
+  <script src="/static/profile-scanner.js?v=1.0"></script>
+  <script src="/static/search-autocomplete.js?v=1.0"></script>
+  <script src="/static/checkpoints.js?v=1.0"></script>
+  <script src="/static/account.js?v=1.0"></script>
+  <script src="/static/blocked-models.js?v=1.0"></script>
+  <script src="/static/pagination.js?v=1.0"></script>
+  <script src="/static/favorites.js?v=1.0"></script>
+  <script src="/static/tags.js?v=1.0"></script>
+  <script src="/static/home-stats.js?v=1.0"></script>
+  <script src="/static/video-prefetch.js?v=1.0"></script>
+  <script src="/static/video-card.js?v=1.0"></script>
+  <script src="/static/video-grid.js?v=1.0"></script>
+  <script src="/static/video-views.js?v=1.0"></script>
+  <script src="/static/search-results.js?v=1.0"></script>
+  <script src="/static/video-modal.js?v=1.0"></script>
+  <script src="/static/modal-player-controls.js?v=1.0"></script>
+  <script src="/static/app-events.js?v=1.0"></script>
+  <script src="/static/app.js?v=35.0"></script>
 </body>
 </html>

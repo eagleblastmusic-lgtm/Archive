@@ -344,13 +344,14 @@ class ArchivebateScraper:
                 "Referer": url
             })
 
-    def _fetch_single_ab_home_page(self, p: int) -> List[Dict[str, Any]]:
+    def _fetch_single_ab_home_page(self, p: int, strict: bool = False) -> List[Dict[str, Any]]:
         """Pobiera pojedynczą stronę z Archivebate."""
         if p > 1000:
             return []
         url = f"https://archivebate.com?page={p}" if p > 1 else "https://archivebate.com"
         try:
             r = self.session.session.get(url, timeout=10)
+            if strict: r.raise_for_status()
             html = r.text
             self._sync_csrf(html, url)
 
@@ -377,6 +378,7 @@ class ArchivebateScraper:
                     parsed.append(video)
             return parsed
         except Exception:
+            if strict: raise
             return []
 
     def get_home_videos(
@@ -534,7 +536,15 @@ class ArchivebateScraper:
 
     def get_model_videos(self, username: str, page: int = 1) -> List[Dict[str, Any]]:
         """Pobiera filmy konkretnej modelki (zoptymalizowane, z pamięcią podręczną)."""
-        cache_key = f"model:{username}:{page}"
+        if not username or not isinstance(username, str):
+            return []
+        clean_user = username.strip()
+        if clean_user.lower() in ("model", "unknown", "null", "undefined", "none") or len(clean_user) < 2 or len(clean_user) > 50:
+            return []
+        if not re.match(r'^[a-zA-Z0-9_\-\.]+$', clean_user):
+            return []
+
+        cache_key = f"model:{clean_user}:{page}"
         now = time.time()
         if cache_key in self._cache:
             entry = self._cache[cache_key]
@@ -544,9 +554,11 @@ class ArchivebateScraper:
         all_videos = []
 
         def _fetch_page(p):
-            url = f"https://archivebate.com/profile/{username}?page={p}"
+            url = f"https://archivebate.com/profile/{clean_user}?page={p}"
             try:
-                r = self.session.session.get(url, timeout=4)
+                r = self.session.session.get(url, timeout=(2.5, 4.0))
+                if r.status_code >= 400:
+                    return []
                 html = r.text
                 self._sync_csrf(html, url)
                 for m in re.finditer(r'wire:id="([^"]+)" wire:initial-data="([^"]+)"', html):
@@ -562,7 +574,7 @@ class ArchivebateScraper:
                                 v = self.parse_video_card(sec)
                                 if v:
                                     if v["username"] == "Model":
-                                        v["username"] = username
+                                        v["username"] = clean_user
                                     vids.append(v)
                             return vids
                 sections = re.findall(r'<section class="video_item">.*?</section>', html, re.DOTALL)

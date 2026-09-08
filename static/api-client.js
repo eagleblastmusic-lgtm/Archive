@@ -20,15 +20,17 @@
     return fallback;
   }
 
-  async function request(url, options = {}) {
+  async function request(url, options = {}, decodeJSON = false) {
     const timeoutMs = Number.isFinite(options.timeoutMs) ? options.timeoutMs : 12000;
     const controller = new AbortController();
     const externalSignal = options.signal;
-    const timer = setTimeout(() => controller.abort('timeout'), timeoutMs);
+    let timedOut = false;
+    const timer = setTimeout(() => { timedOut = true; controller.abort('timeout'); }, timeoutMs);
+    const onAbort = () => controller.abort(externalSignal.reason);
 
     if (externalSignal) {
       if (externalSignal.aborted) controller.abort(externalSignal.reason);
-      else externalSignal.addEventListener('abort', () => controller.abort(externalSignal.reason), { once: true });
+      else externalSignal.addEventListener('abort', onAbort, { once: true });
     }
 
     const init = { ...options, signal: controller.signal };
@@ -38,7 +40,7 @@
       const res = await fetch(url, init);
       if (!res.ok) {
         let details = null;
-        try { details = await res.json(); } catch (_) { /* noop */ }
+        try { details = await res.json(); } catch (err) { if (controller.signal.aborted) throw err; }
         throw new ApiError(
           (details && (details.detail || details.message)) || friendlyMessage(res.status),
           res.status,
@@ -46,11 +48,11 @@
           details
         );
       }
-      return res;
+      return decodeJSON ? await res.json() : res;
     } catch (err) {
       if (err instanceof ApiError) throw err;
       if (controller.signal.aborted) {
-        throw new ApiError('Przekroczono czas oczekiwania na odpowiedź.', 408, 'timeout');
+        throw new ApiError(timedOut ? 'Przekroczono czas oczekiwania na odpowiedź.' : 'Anulowano żądanie.', timedOut ? 408 : 0, timedOut ? 'timeout' : 'cancelled');
       }
       if (!navigator.onLine) {
         throw new ApiError('Brak połączenia z internetem.', 0, 'offline');
@@ -58,23 +60,22 @@
       throw new ApiError(err && err.message ? err.message : 'Błąd połączenia.', 0, 'network_error');
     } finally {
       clearTimeout(timer);
+      externalSignal?.removeEventListener('abort', onAbort);
     }
   }
 
   async function getJSON(url, options = {}) {
-    const res = await request(url, { cache: 'no-store', ...options });
-    return res.json();
+    return request(url, { cache: 'no-store', ...options }, true);
   }
 
   async function postJSON(url, body, options = {}) {
     const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
-    const res = await request(url, {
+    return request(url, {
       method: 'POST',
       ...options,
       headers,
       body: JSON.stringify(body ?? {})
-    });
-    return res.json();
+    }, true);
   }
 
   window.ArchivebateAPI = { ApiError, request, getJSON, postJSON, friendlyMessage };

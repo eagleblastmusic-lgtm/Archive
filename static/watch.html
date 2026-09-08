@@ -505,10 +505,11 @@
   </main>
 
   <script src="/static/api-client.js?v=1"></script>
+  <script src="/static/performance.js?v=1"></script>
   <script src="/static/player-core.js?v=2.2"></script>
-  <script src="/static/youtube-storyboard.js?v=2.0"></script>
+  <script src="/static/youtube-storyboard.js?v=3.0"></script>
   <script>
-    const videoId = window.location.pathname.split('/').filter(Boolean).pop();
+    let videoId = window.location.pathname.split('/').filter(Boolean).pop();
     const durationHint = Number(new URLSearchParams(window.location.search).get('duration') || 0);
     const playerBox = document.getElementById('playerBox');
     const player = document.getElementById('mainPlayer');
@@ -622,41 +623,10 @@
     let watchSeekDebounce = null;
     let watchLastSeekTime = 0;
 
+    let watchSeeker = null;
+    let timelineHoverController = null;
     function seekWatchPreviewVideo(targetTime) {
-      if (!previewVideo || !previewVideo.src) return;
-
-      clearTimeout(watchSeekDebounce);
-      const now = performance.now();
-      const timeSinceLast = now - watchLastSeekTime;
-
-      const executeSeek = () => {
-        watchLastSeekTime = performance.now();
-        try {
-          if (previewVideo.readyState < 1) {
-            previewVideo.addEventListener('loadedmetadata', () => {
-              seekWatchPreviewVideo(targetTime);
-            }, { once: true });
-            return;
-          }
-          const maxDur = (Number.isFinite(previewVideo.duration) && previewVideo.duration > 0)
-            ? previewVideo.duration
-            : ((Number.isFinite(player.duration) && player.duration > 0) ? player.duration : 99999);
-          const seekPos = Math.max(0, Math.min(maxDur, targetTime));
-          if (typeof previewVideo.fastSeek === 'function') {
-            previewVideo.fastSeek(seekPos);
-          } else {
-            previewVideo.currentTime = seekPos;
-          }
-          previewVideo.style.opacity = '1';
-          previewVideo.style.display = 'block';
-        } catch (e) {}
-      };
-
-      if (timeSinceLast >= 50) {
-        executeSeek();
-      } else {
-        watchSeekDebounce = setTimeout(executeSeek, 50 - timeSinceLast);
-      }
+      if (previewVideo.getAttribute('src')) watchSeeker?.request(targetTime);
     }
 
     function renderWatchTimelinePreview(clientX) {
@@ -684,11 +654,41 @@
         return;
       }
 
-      if (spriteBoard && timelineSprite && window.ArchivebateYouTubeStoryboard) {
+      // 1. Archivebate gęsty segment: dokładna sekunda (błąd <= 1s, 0ms, 0 zapytań strumienia)
+      const segment = window.ArchivebateYouTubeStoryboard?.getSegmentFromCache?.(videoId, duration, targetTime);
+      if (segment && timelineSprite && window.ArchivebateYouTubeStoryboard) {
         timelinePreviewImg.style.display = 'none';
         previewVideo.style.display = 'none';
         timelinePreviewStatus.style.display = 'none';
-        ArchivebateYouTubeStoryboard.applyFrame(timelineSprite, spriteBoard, pos);
+        timelineTimeText.innerText = formatTime(targetTime);
+        window.ArchivebateYouTubeStoryboard.applyFrame(timelineSprite, segment, targetTime, { targetTime, duration });
+        return;
+      }
+
+      // Zgłoszenie zapotrzebowania na gęsty segment w tle
+      if (window.ArchivebateYouTubeStoryboard && videoId && duration > 0) {
+        window.ArchivebateYouTubeStoryboard.requestSegment({
+          videoId,
+          duration,
+          targetTime,
+          signal: timelineHoverController?.signal,
+          onReady: () => {
+            if (timelineTooltip.style.display !== 'none') {
+              renderWatchTimelinePreview(previewClientX);
+            }
+          }
+        });
+      }
+
+      // 2. Fallback: rzadki storyboard z informacją o przygotowywaniu dokładnego podglądu
+      if (spriteBoard && timelineSprite && window.ArchivebateYouTubeStoryboard) {
+        const res = window.ArchivebateYouTubeStoryboard.applyFrame(timelineSprite, spriteBoard, targetTime, { targetTime, duration });
+        const frameTimeStr = res?.frameTime !== undefined ? ` • klatka ≈ ${formatTime(res.frameTime)}` : '';
+        timelineTimeText.innerText = `${formatTime(targetTime)}${frameTimeStr}`;
+        timelinePreviewImg.style.display = 'none';
+        previewVideo.style.display = 'none';
+        timelinePreviewStatus.innerText = 'Przygotowywanie dokładnego podglądu...';
+        timelinePreviewStatus.style.display = 'block';
         return;
       }
 
@@ -714,6 +714,9 @@
 
     function updateWatchTimelinePreview(e) {
       previewClientX = e.clientX;
+      if (!timelineHoverController || timelineHoverController.signal.aborted) {
+        timelineHoverController = new AbortController();
+      }
       if (previewRaf) return;
       previewRaf = requestAnimationFrame(() => {
         previewRaf = 0;
@@ -738,9 +741,15 @@
       else updateWatchTimelinePreview(e);
     }, { passive: true });
     timelineContainer.addEventListener('pointerleave', () => {
+      timelineHoverController?.abort();
+      timelineHoverController = null;
       if (!isDraggingTimeline) {
         timelineTooltip.style.display = 'none';
         if (previewVideo) previewVideo.style.display = 'none';
+        if (timelineSprite && window.ArchivebateYouTubeStoryboard) {
+          ArchivebateYouTubeStoryboard.clearFrame(timelineSprite);
+        }
+        timelinePreviewStatus.style.display = 'none';
       }
     });
     timelineContainer.addEventListener('pointerdown', (e) => {
@@ -949,36 +958,127 @@
       }
     });
 
-    async function initWatch() {
+    let watchGeneration = 0;
+    let watchController = null;
+    let activeWatchSession = null;
+    const watchLoadingMarkup = loader.innerHTML;
+    async function initWatch(options = {}) {
+      const generation = ++watchGeneration;
+      const forceRefresh = !!options?.forceRefresh;
+      loader.innerHTML = watchLoadingMarkup;
+      loader.style.display = 'flex';
+      ArchivebatePerf.setPlaybackBusy(true);
+      player.pause();
+      player.removeAttribute('src');
+      player.load();
+      watchController?.abort();
+      timelineHoverController?.abort();
+      timelineHoverController = null;
+      spriteBoard = null;
+      activeWatchSession?.abort('switched_video');
+      watchController = new AbortController();
+      const controller = watchController;
+
+      const watchSession = activeWatchSession = (window.ArchivebatePerf?.startPlaybackSession ? window.ArchivebatePerf.startPlaybackSession({
+        id: videoId,
+        owner: 'player',
+        priority: 'high',
+        reason: options?.reason || 'watch_page'
+      }) : null);
+
+      watchSeeker?.destroy();
+      watchSeeker = ArchivebatePlayerCore.createPreviewSeeker(previewVideo, {onFrame:()=>{previewVideo.style.display="block";}});
+      spriteBoard = null;
       if (!videoId) return;
 
       const watchPoster = document.getElementById('watchLoadingPoster');
       const hideWatchLoader = () => {
+        if (generation !== watchGeneration) return;
         loader.style.display = 'none';
         if (watchPoster) {
           watchPoster.style.opacity = '0';
-          setTimeout(() => { watchPoster.style.display = 'none'; }, 350);
+          setTimeout(() => {
+            if (generation === watchGeneration && watchPoster.style.opacity === '0') watchPoster.style.display = 'none';
+          }, 350);
         }
+      };
+      player.onloadedmetadata = () => {
+        if (generation !== watchGeneration) return;
+        watchSession?.markMetadata();
       };
       player.onloadeddata = hideWatchLoader;
       player.oncanplay = hideWatchLoader;
-      player.onplaying = hideWatchLoader;
+      player.ontimeupdate = () => {
+        if (generation !== watchGeneration) return;
+        if (player.currentTime > 0) hideWatchLoader();
+        if (window.ArchivebatePerf?.updatePlaybackBuffer) {
+          window.ArchivebatePerf.updatePlaybackBuffer(player, 5.0);
+        }
+      };
+      player.onprogress = () => {
+        if (generation !== watchGeneration) return;
+        if (window.ArchivebatePerf?.updatePlaybackBuffer) {
+          window.ArchivebatePerf.updatePlaybackBuffer(player, 5.0);
+        }
+      };
+      player.onplaying = () => {
+        if (generation !== watchGeneration) return;
+        hideWatchLoader();
+        watchSession?.markFirstByte();
+        if (window.ArchivebatePerf?.updatePlaybackBuffer) {
+          window.ArchivebatePerf.updatePlaybackBuffer(player, 5.0);
+        } else {
+          ArchivebatePerf.setPlaybackBusy(false);
+        }
+      };
+      player.onwaiting = player.onstalled = () => {
+        if (generation !== watchGeneration) return;
+        ArchivebatePerf.setPlaybackBusy(true);
+      };
       player.onerror = () => {
-        loader.innerHTML = '<div style="color: #ef4444; font-weight: 600;">Nie udało się załadować wideo. Spróbuj odświeżyć.</div>';
+        if (generation !== watchGeneration) return;
+        ArchivebatePerf.setPlaybackBusy(false);
+        watchSession?.markError('watch_stream_error', 'Błąd strumienia wideo');
+        loader.style.display = 'flex';
+        loader.innerHTML = `
+          <div style="text-align: center; max-width: 480px; padding: 24px; background: rgba(0,0,0,0.85); border-radius: 12px; border: 1px solid rgba(239, 68, 68, 0.3);">
+            <i class="fa-solid fa-triangle-exclamation" style="font-size: 36px; color: #f87171; margin-bottom: 12px; display: block;"></i>
+            <div style="color: #f87171; font-weight: 700; font-size: 16px; margin-bottom: 8px;">Nie udało się załadować wideo (błąd źródła)</div>
+            <div style="color: #94a3b8; font-size: 13px; margin-bottom: 16px;">Serwer strumienia jest chwilowo niedostępny lub odrzucił połączenie.</div>
+            <button id="watchRetryPlaybackBtn" style="background: #2563eb; color: #fff; border: none; padding: 10px 20px; border-radius: 8px; font-weight: 600; cursor: pointer;">
+              <i class="fa-solid fa-rotate-right"></i> Ponów próbę
+            </button>
+          </div>
+        `;
+        const retryBtn = document.getElementById('watchRetryPlaybackBtn');
+        if (retryBtn) {
+          retryBtn.onclick = () => {
+            initWatch({ forceRefresh: true, reason: 'retry_button' });
+          };
+        }
       };
 
-      // 1. NATYCHMIASTOWY START STRUMIENIA (0 ms opóźnienia, równolegle z pobieraniem metadanych)
-      const immediateStream = `/api/video/stream?id=${encodeURIComponent(videoId)}`;
-      player.src = immediateStream;
-      player.preload = 'auto';
-      player.play().catch(() => {});
+      // 1. NATYCHMIASTOWY START STRUMIENIA (równolegle, równolegle z pobieraniem metadanych)
+      const immediateStream = `/api/video/stream?id=${encodeURIComponent(videoId)}&owner=player&priority=high&reason=watch_page`;
+      const observeFirstFrame = () => {
+        ArchivebatePlayerCore.waitForPresentedFrame(player, undefined, 30000, controller.signal).then(presented => {
+          if (presented && generation === watchGeneration) watchSession?.markFirstFrame();
+        });
+      };
+      watchSession?.markConnectStart();
+      if (!forceRefresh) {
+        player.src = immediateStream;
+        player.preload = 'auto';
+        observeFirstFrame();
+        player.play().catch(() => {});
+      }
 
       try {
-        const data = await ArchivebateAPI.getJSON(`/api/video/details?id=${encodeURIComponent(videoId)}`, { timeoutMs: 12000 });
+        const data = await ArchivebateAPI.getJSON(`/api/video/details?id=${encodeURIComponent(videoId)}${forceRefresh ? '&force_refresh=true' : ''}`, { timeoutMs: 12000, signal: controller.signal });
+        if (generation !== watchGeneration) return;
         currentDetails = data;
-        if (data.username && data.username.toLowerCase() !== 'model') {
-          getAuthorVideosWatch(data.username).catch(() => {});
-        }
+        watchSession?.markUrlResolved(data.proxy_stream_url || data.direct_url, !forceRefresh);
+
 
         document.title = `${data.username || 'Wideo'} — Archivebate Player`;
         modelNameText.innerText = data.username || 'Model';
@@ -1010,6 +1110,7 @@
         updateFavState(!!data.is_favorite);
 
         if (data.is_private) {
+          ArchivebatePerf.setPlaybackBusy(false);
           player.pause();
           player.removeAttribute('src');
           player.load();
@@ -1025,13 +1126,15 @@
         }
 
         // Zawsze używamy bezpiecznego lokalnego proxy strumienia MP4 bez reklam
-        const streamUrl = data.proxy_stream_url || data.direct_url;
+        const streamUrl = (data.proxy_stream_url || data.direct_url)
+          ? immediateStream + (forceRefresh ? `&retry=${generation}` : '') : '';
         if (streamUrl) {
           const cur = player.getAttribute('src') || player.src || '';
           const norm = (u) => { try { return new URL(u, window.location.href).href; } catch(e) { return u; } };
           if (!cur || norm(cur) !== norm(streamUrl)) {
             player.src = streamUrl;
             player.preload = 'auto';
+            observeFirstFrame();
             player.play().catch(() => {});
           }
 
@@ -1044,7 +1147,7 @@
             watchPosterSrc = watchPosterSrc.replace(/\/180x135\/\d+\.jpg/, '/preview.jpg');
           }
 
-          if (watchPoster && watchPosterSrc) {
+          if (watchPoster && watchPosterSrc && player.readyState < 2) {
             watchPoster.src = watchPosterSrc;
             watchPoster.style.display = 'block';
             watchPoster.style.opacity = '1';
@@ -1066,16 +1169,21 @@
             timelinePreviewImg.src = `${timelinePrefix}1.jpg`;
             timelinePreviewImg.style.display = 'block';
             timelinePreviewStatus.style.display = 'none';
-            for (let i = 1; i <= timelineCount; i += 1) { const img = new Image(); img.src = `${timelinePrefix}${i}.jpg`; }
+            ArchivebatePerf.prefetchUrls(Array.from({length:timelineCount},(_,i)=>`${timelinePrefix}${i+1}.jpg`),{concurrency:2,signal:controller.signal});
           } else {
             timelinePrefix = null;
             timelineCount = 0;
+            ArchivebateYouTubeStoryboard.attach({video:player,videoId,timeline:timelineContainer,signal:controller.signal,onBoard:board=>{
+              if(generation!==watchGeneration)return;
+              spriteBoard=board;
+              previewVideo.pause();previewVideo.removeAttribute('src');previewVideo.load();
+            }});
             timelinePreviewImg.style.display = 'none';
             timelinePreviewStatus.style.display = 'none';
             if (previewVideo && streamUrl) {
               let warmedWatchTimeline = false;
               const warmWatch = () => {
-                if (warmedWatchTimeline || !previewVideo) return;
+                if (warmedWatchTimeline || spriteBoard || !previewVideo) return;
                 warmedWatchTimeline = true;
                 previewVideo.src = streamUrl;
                 previewVideo.preload = 'metadata';
@@ -1084,11 +1192,13 @@
                 previewVideo.load();
               };
               if (timelineContainer) {
-                timelineContainer.addEventListener('pointerenter', warmWatch, { once: true });
+                timelineContainer.addEventListener('pointerenter', warmWatch, { once: true, signal: controller.signal });
               }
             }
           }
         } else {
+          ArchivebatePerf.setPlaybackBusy(false);
+          loader.style.display = 'flex';
           loader.innerHTML = '<div style="color: #ef4444; font-weight: 600;">Nie znaleziono bezpośredniego strumienia wideo.</div>';
         }
 
@@ -1097,19 +1207,17 @@
           downloadBtn.style.display = 'inline-flex';
         }
 
-        // Zapis do historii
-        ArchivebateAPI.postJSON('/api/account/history/record', {
-          id: videoId,
-          url: data.url,
-          username: data.username,
-          thumbnail: data.thumbnail,
-          date: data.date
-        }, { timeoutMs: 5000 }).catch(() => {});
+        const recordHistory = () => ArchivebateAPI.postJSON('/api/account/history/record', {id:videoId,url:data.url,username:data.username,thumbnail:data.thumbnail,date:data.date}, {timeoutMs:5000}).catch(()=>{});
+        if (!player.paused && player.readyState >= 2) recordHistory();
+        else player.addEventListener('playing', recordHistory, {once:true,signal:controller.signal});
 
       } catch (err) {
-        loader.innerHTML = `<div style="color: #ef4444;">${err?.message || 'Wystąpił błąd podczas pobierania detali filmu.'}</div>`;
+        if (generation !== watchGeneration || err?.code === 'cancelled') return;
+        if (forceRefresh) player.onerror();
       }
     }
+
+    window.addEventListener('pagehide',()=>{watchController?.abort();watchSeeker?.destroy();});
 
     function updateFavState(isFav) {
       if (isFav) {
